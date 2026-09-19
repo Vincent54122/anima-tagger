@@ -1,0 +1,33 @@
+# ---------------- 虚拟环境 ----------------
+.venv/
+venv/
+env/
+
+# ---------------- Python ----------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ---------------- 模型权重（体积大，由 tools/setup.py 拉取，不入库）----------------
+# 只忽略下载落点与权重文件本身；models/README.md 和 models/t5_tokenizer/ 要入库
+models/wd-eva02-tagger-2026-canary-onnx-v2/
+models/**/*.onnx
+models/**/*.safetensors
+models/**/*.bin
+models/**/*.pt
+models/**/*.ckpt
+
+# ---------------- 运行产物 ----------------
+run.json
+run*.json
+*.tagger.json
+.work/
+*.log
+
+# ---------------- 编辑器 / 系统 ----------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

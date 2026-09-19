@@ -1,0 +1,23 @@
+# 行尾：仓库内一律 LF，检出时不改写工作区
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+
+# 逐字节钉死的第三方资产：禁止任何行尾 / 编码转换。
+# 它的 SHA256 记录在 THIRD_PARTY_NOTICES.md 与 models/README.md，
+# 一旦被 CRLF 规范化就对不上了。
+models/qwen_tokenizer/tokenizer.json -text
+
+# 二进制
+*.onnx        binary
+*.safetensors binary
+*.bin         binary
+*.pt          binary
+*.ckpt        binary
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.webp        binary

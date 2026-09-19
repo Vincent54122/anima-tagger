@@ -1,0 +1,6 @@
+# 运行时依赖（tools/setup.py 会自动安装）
+# 另装：huggingface_hub>=0.23 —— 只有 setup.py 下载模型时用得上，运行不需要。
+onnxruntime>=1.17
+pillow>=10.0
+numpy>=1.24
+tokenizers>=0.15
