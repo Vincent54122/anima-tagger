@@ -71,21 +71,21 @@ Regardless of the generation branch, outputs follow a strict **"tag sequence + s
 ```text
 general, 1girl, solo,
 
-ui (blue archive),
+short hair, blue hair, blue eyes, parted bangs, bare legs,
 
-black hair, very long hair, blue eyes, halo,
+transparent, translucent, see-through clothes, raincoat, coat, hood, long sleeves, see-through sleeves, blue shirt, pleated skirt, blue skirt, hair ornament, hair flower, white flower, transparent umbrella, white shoes, sneakers,
 
-white serafuku, purple neckerchief, grey cardigan,
+standing, standing on one leg, leg up, holding, holding umbrella, outstretched arm, looking at viewer, light smile, closed mouth,
 
-standing, looking at viewer, holding book,
+full body, from below, dutch angle,
 
-cowboy shot, depth of field,
+outdoors, day, building, cloudy sky, blue sky, cumulonimbus cloud, sunlight, backlighting, lens flare, rainbow, rain, water, puddle, reflection, water drop, bird, balloon, plant, overgrown,
 
-blue background, gradient background,
-
-Place the character slightly right of center, Use soft light from the left, Keep the face sharp against a softly blurred background.
+Place a girl balancing on one leg under a clear umbrella just after rain, one arm outstretched toward the rainbow arcing overhead and the other hand gripping the umbrella handle. Frame the full body from a low angle, overgrown buildings rising on both sides and small balloons drifting in the distant sky. Use strong sunlight bursting from the upper left behind the umbrella, water drops glittering in the backlight and the wet ground mirroring the sky.
 ```
 
+> **Punctuation**: Tags are always joined with `", "`; each NL sentence is a complete English sentence, separated and terminated by a period `.` rather than a comma.
+>
 > **Design Principle**: Prohibits generic quality boosters (`masterpiece`, `best quality`), artist tags, and negative prompts, ensuring clean, direct model conditioning.
 
 ## Quick Install

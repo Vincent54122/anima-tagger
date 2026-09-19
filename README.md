@@ -71,21 +71,21 @@
 ```text
 general, 1girl, solo,
 
-ui (blue archive),
+short hair, blue hair, blue eyes, parted bangs, bare legs,
 
-black hair, very long hair, blue eyes, halo,
+transparent, translucent, see-through clothes, raincoat, coat, hood, long sleeves, see-through sleeves, blue shirt, pleated skirt, blue skirt, hair ornament, hair flower, white flower, transparent umbrella, white shoes, sneakers,
 
-white serafuku, purple neckerchief, grey cardigan,
+standing, standing on one leg, leg up, holding, holding umbrella, outstretched arm, looking at viewer, light smile, closed mouth,
 
-standing, looking at viewer, holding book,
+full body, from below, dutch angle,
 
-cowboy shot, depth of field,
+outdoors, day, building, cloudy sky, blue sky, cumulonimbus cloud, sunlight, backlighting, lens flare, rainbow, rain, water, puddle, reflection, water drop, bird, balloon, plant, overgrown,
 
-blue background, gradient background,
-
-Place the character slightly right of center, Use soft light from the left, Keep the face sharp against a softly blurred background.
+Place a girl balancing on one leg under a clear umbrella just after rain, one arm outstretched toward the rainbow arcing overhead and the other hand gripping the umbrella handle. Frame the full body from a low angle, overgrown buildings rising on both sides and small balloons drifting in the distant sky. Use strong sunlight bursting from the upper left behind the umbrella, water drops glittering in the backlight and the wet ground mirroring the sky.
 ```
 
+> **标点规范**：Tag 层一律用 `", "` 分隔；末尾 NL 段每句都是完整英文句，句间与句末都用英文句号 `.`，不要写成逗号。
+>
 > **纯净原则**：本工具拒绝产出无效的质量前缀（`masterpiece`, `best quality` 等）、画师 tag 及负面提示词，专注把控构图与细节生成。
 
 ## 快速安装
