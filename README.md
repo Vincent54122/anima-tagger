@@ -64,9 +64,15 @@
                     └───────────────────────────┘
 ```
 
+## 输入图片
+
+<p align="center">
+  <img src="./assets/example-input.jpg" alt="示例输入：雨后天台上撑着透明伞的少女" width="420">
+</p>
+
 ## 输出示例
 
-无论走反推还是创作，最终交付形态严格统一为**「标准 Tag 串 ＋ 尾部空间/光影自然语言」**：
+把上面这张图交给本工具反推，最终交付形态严格统一为**「标准 Tag 串 ＋ 尾部空间/光影自然语言」**（创作分支的输出形态完全相同）：
 
 ```text
 general, 1girl, solo,
@@ -156,6 +162,7 @@ anima-tagger/
 │   ├── wd_tagger.py             # CPU ONNX 标签反推引擎
 │   ├── anima_validate.py        # 确定性标签校验与 Token 统计
 │   └── requirements.txt
+├── assets/                      # README 示例图片
 └── models/
     ├── t5_tokenizer/            # 内置 T5 分词器词表
     └── wd-eva02-.../            # 下载的打标权重（setup 脚本自动拉取）

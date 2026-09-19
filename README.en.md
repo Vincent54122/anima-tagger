@@ -64,9 +64,15 @@ Modern anime diffusion models like Anima use dual-channel text conditioning (Qwe
                     └───────────────────────────┘
 ```
 
+## Input Example
+
+<p align="center">
+  <img src="./assets/example-input.jpg" alt="Example input: a girl holding a clear umbrella after the rain" width="420">
+</p>
+
 ## Prompt Example
 
-Regardless of the generation branch, outputs follow a strict **"tag sequence + spatial/lighting natural language"** format:
+Reversing the image above yields the same strict format every branch produces — **"tag sequence + spatial/lighting natural language"**:
 
 ```text
 general, 1girl, solo,
@@ -155,6 +161,7 @@ anima-tagger/
 │   ├── wd_tagger.py             # ONNX CPU tagging engine
 │   ├── anima_validate.py        # Deterministic validator & tokenizer
 │   └── requirements.txt
+├── assets/                      # README example images
 └── models/
     ├── t5_tokenizer/            # Bundled T5 tokenizer assets
     └── wd-eva02-.../            # Downloaded model weights (via setup.py)
