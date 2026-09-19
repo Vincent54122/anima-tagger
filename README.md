@@ -120,11 +120,13 @@ python tools/setup.py --check
 ```powershell
 $PY = ".\.venv\Scripts\python.exe"        # Linux / macOS: ./.venv/bin/python
 
-# 1. 运行打标（输出带评分的 JSON）
-& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json > run.json
+# 1. 管道化打标与校验（推荐：无盘流式交互，零临时文件产生）
+& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json | & $PY tools\anima_validate.py --tagger-json -
 
-# 2. 自动校验与整理打标结果
-& $PY tools\anima_validate.py --tagger-json run.json
+# 2. 若需落盘中间结果，统一收敛在 .work/ 临时目录（已配置 .gitignore 忽略）
+New-Item -ItemType Directory -Force -Path ".work" | Out-Null
+& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json | Out-File .work\run.json -Encoding utf8
+& $PY tools\anima_validate.py --tagger-json .work\run.json
 
 # 3. 校验包含自然语言的完整成品
 & $PY tools\anima_validate.py --tags "1girl, solo, ..." --nl "Place the character..."

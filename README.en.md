@@ -119,11 +119,13 @@ Drive the local tagger and validator directly:
 ```powershell
 $PY = ".\.venv\Scripts\python.exe"        # Linux / macOS: ./.venv/bin/python
 
-# 1. Run local tagging (outputs JSON with confidence scores)
-& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json > run.json
+# 1. Piped tagging & validation (Recommended: streaming pipe without temporary files)
+& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json | & $PY tools\anima_validate.py --tagger-json -
 
-# 2. Deterministically validate and format tags
-& $PY tools\anima_validate.py --tagger-json run.json
+# 2. Or save intermediate artifacts to the managed .work/ temporary directory
+New-Item -ItemType Directory -Force -Path ".work" | Out-Null
+& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json | Out-File .work\run.json -Encoding utf8
+& $PY tools\anima_validate.py --tagger-json .work\run.json
 
 # 3. Validate full output including natural language sentences
 & $PY tools\anima_validate.py --tags "1girl, solo, ..." --nl "Place the character..."

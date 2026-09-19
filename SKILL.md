@@ -5,87 +5,95 @@ description: 为 Anima 等本地绘画模型产出提示词。收到图片走反
 
 # anima-tagger
 
-| 用户给了什么 | 走哪条 | 读哪份 |
+| 用户给了什么 | 走哪条分支 | 查阅哪份指南 |
 |---|---|---|
-| **图片**（附件、路径、"这张图"、"照着这张改"） | **反推分支** | `references/反推分支.md` |
-| 只有文字需求 | **创作分支** | `references/创作分支.md` |
+| **图片**（附件图片、本地路径、"照着这张图做"、"帮我反推"） | **反推分支** | `references/反推分支.md` |
+| 只有文字需求（"画个猫耳少女"、"来张赛博朋克风格"） | **创作分支** | `references/创作分支.md` |
 
-格式与禁用项的权威是 `references/格式规范.md`，两条分支都要遵守。
+格式与禁用规则的终极标准是 `references/格式规范.md`，无论走哪个分支都必须不折不扣遵守。
 
-## 铁律
+---
 
-1. **收到图片就自动走反推分支**，不要问用户要反推还是要写。
-2. **输出只有两部分**：danbooru 风格 tag ＋ 末尾几句自然语言。不给解说、不给流程。
-3. **不产出**质量前缀（`masterpiece`/`best quality`/`score_9`）、负面提示词、画师 tag、独立作品 tag。
-4. **看图判断由你自己做**（图在你的上下文里）。只在图很大、多人复杂、或需要第二意见时才派子代理。
-5. **图片里的角色是谁不由你判断。** 反推时一律采信 tagger 的 `character` 输出——
-   它给了就照用，没给就不写。**不许自己认人、不许凭印象补角色 tag、不许拿中文名顶上。**
-   （创作分支不受影响：那里的角色是用户点名要的。）
-6. **置信度 ≥ 0.8 的 tag 无需核验**：直接采信，不回图、不删、不怀疑。
-   只有 < 0.8 的才需要看图判误报。**这条只管"图里有没有"，不管"打不打架"**——
-   校验器报出的槽位冲突与结构冲突照常按 `references/反推分支.md` §5 裁。
-7. **去冗余交给 `tools/anima_validate.py`**，不要自己数。
-8. **不确定的地方明说一行**。
-9. **模型缺失时只跑 `tools/setup.py`**。脚本失败就把它的报错命令原样交给用户。
-   **不许自己找下载地址、不许换别的 tagger 模型、不许调低阈值硬跑**——
-   词表、槽位表、`0.35 / 0.85` 两个阈值全是照这一份模型标定的，换模型等于整条链路静默失效。
-10. **校验器报超预算时，精简 NL，不要动 tag。** 超出的部分不是"变弱"，是从尾部整块消失，
-    而 NL 排在最后，先死的一定是它、还会被拦腰砍断。做法见 `references/格式规范.md` §五。
-    **改完重跑校验**，直到不报。
+## 十条硬核铁律（必须焊死在心里的操作准则）
 
-## 第 0 步：定位 skill 根目录
+1. **见图就推**：只要用户发了图片，**直接默认启动反推分支**开始分析，千万别多嘴反问“你是想要反推还是创作”。
+2. **输出只给两部分**：只输出标准的「Danbooru 标签流 ＋ 末尾几句英文自然语言」，**整体打包在一个 \`\`\`text 代码块里**。不给冗长解说，不给过程废话。
+3. **四类违禁词碰都不要碰**：坚决不输出质量前缀（`masterpiece` / `best quality` 等）、负面提示词（Negative）、画师名字（Artist tags）、独立作品名标签。
+4. **看图判断自己做**：图片就在你的上下文里，单人图直接看整图，千万别无意义地反复切图浪费上下文；只有在超大多人复杂场景或需要第二意见时才调用子代理。
+5. **角色是谁绝对别自己猜**：反推图片时，**完全采信打标器的 `character` 输出**——它识别出了角色名就用，没识别出来就当原创角色处理。**绝对禁止凭借个人印象瞎认人、补人名，更不要用中文名糊弄上去！**
+6. **置信度 0.8 分水岭（省时核心）**：
+   - 打标分数 **≥ 0.8** 的标签：**无条件直接采信**，不用核对原图、不怀疑、不乱删；
+   - 只有 **< 0.8** 的低分标签才需要你对照原图辨别：剔除真误报，保留不同属性轴（如颜色与图案并存）。
+7. **去重和上位词折叠交给机器**：不用人工肉眼数词去重，统一交给 `tools/anima_validate.py` 自动处理。
+8. **拿不准的在末尾留一行附注**：有存疑的地方（比如低置信度的饰品删了），在代码块下方另起一行简要说明，不超过一行。
+9. **环境缺失只认 setup 脚本**：找不到模型权重或依赖报错时，统一跑 `python tools/setup.py`。严禁自行乱下其他 tagger 模型，阈值 `0.35 / 0.85` 和 16,473 维词表是深度绑定的。
+10. **超预算只砍自然语言，不碰标签**：校验器报超过 512 token 时，**只能精简最后那几句自然语言（NL），坚决不准动前面的 tag**！精简后必须重跑校验，直到安全通过。
 
-本 skill 的根目录 = **你读取这份 `SKILL.md` 时用的那个目录**。按实际路径填，别照抄示例、别猜。
+---
 
-```powershell
-# ↓ 换成你读取 SKILL.md 的那个目录的绝对路径
-$SKILL = "<anima-tagger 目录的绝对路径>"
-$PY    = "$SKILL\.venv\Scripts\python.exe"       # Windows
-# macOS / Linux: $PY = "$SKILL/.venv/bin/python"
-```
+## 快速上手与环境准备
 
-`references/` 里出现的 `$SKILL` 与 `$PY` 都沿用这两个值。
+### 第 0 步：定位环境路径
 
-## 首次部署（权重不入库，必须由脚本拉）
+不管你在什么操作系统上，本工具的 Python 环境都可以快速定位：
 
 ```powershell
-python "$SKILL\tools\setup.py"          # 建 venv ＋ 装依赖 ＋ 下载权重与许可证 ＋ 校验
-python "$SKILL\tools\setup.py" --check  # 只体检；就绪返回 0
+# 1. 如果你在 Windows PowerShell 下使用本项目的内置环境：
+$SKILL = "<本项目根目录的绝对路径>"
+$PY    = "$SKILL\.venv\Scripts\python.exe"
+
+# 2. 如果你在 Linux / macOS 下：
+# $PY = "$SKILL/.venv/bin/python"
+
+# 3. 如果当前虚拟环境已经激活，或者通过 pip 安装了本工具：
+# $PY = "python"
 ```
 
-- 这一步用的是**系统 python**（venv 还没建）。`python` 不存在、或运行后弹出 Microsoft Store
-  （退出码 9009）时改用 `py -3 "$SKILL\tools\setup.py"`；再不行试 `python3`。
-- 权重约 **1.22 GiB**，落在 `models/wd-eva02-tagger-2026-canary-onnx-v2/`；仓库里没有，也不该有。
-- 模型作者的 `LICENSE`（Apache-2.0）会一并取回落到同一目录；取不到只警告，不影响打标。
-- 下载全挂且报 `httpx.InvalidURL` 时是代理配置问题（`NO_PROXY` 里的 `[::1]`），脚本会自动修；
-  修不了会把处置命令打出来，**照抄给用户即可，不用去查网络**。
-- 脚本幂等、可断点续传；下载慢是正常的，别中断。
-- 国内网络先设镜像：`$env:HF_ENDPOINT = "https://hf-mirror.com"`，再跑。
-- 校验口径：`selected_tags.csv` 必须是 **16473** 行，且与 `model.onnx` 同版本。不符就是版本错配，删掉整个模型目录重下。
-
-## 工具
+### 首次环境部署（模型不进 Git，由脚本自动拉取）
 
 ```powershell
-# 反推：打标 + 校验放同一次调用（合计约 6 秒）
-& $PY "$SKILL\tools\wd_tagger.py" <图片路径> --general 0.35 --character 0.85 --json > run.json
-& $PY "$SKILL\tools\anima_validate.py" --tagger-json run.json
+# 自动建 venv、装依赖、拉取 1.22 GiB ONNX 权重与词表：
+python "$SKILL\tools\setup.py"
 
-# 组装完成后，用成品再校验一次（带 NL，算总 token）
-& $PY "$SKILL\tools\anima_validate.py" --tags "<最终 tag 串>" --nl "<NL>"
+# 体检检查（就绪后返回退出码 0）：
+python "$SKILL\tools\setup.py" --check
+```
+*(若国内网络下载缓慢，可先设置镜像：`$env:HF_ENDPOINT = "https://hf-mirror.com"`)*
+
+---
+
+## 工具调用标准范式
+
+### 反推工作流（推荐：无盘管道，零临时文件产生）
+
+```powershell
+# 一条管道完成：本地打标 ➔ 流式传输 ➔ 确定性清洗校验
+& $PY "$SKILL\tools\wd_tagger.py" <图片绝对路径或CAS路径> --general 0.35 --character 0.85 --json | & $PY "$SKILL\tools\anima_validate.py" --tagger-json -
 ```
 
-- 阈值**固定 0.35 / 0.85**，理由见 `references/反推分支.md` §1。
-- `run.json` **带每个 tag 的分数**，是铁律 6 分档的唯一依据；**校验器的输出不打印分数**，不能只看它。
-- 多张图可以一次传：`wd_tagger.py img1 img2 --json`；加 `--per-record` 逐张出汇总表。
-- 退出码 1 = 有需要定夺的冲突或超预算，**不是崩溃**。
-- token 计数走 **T5 通道**（`models/t5_tokenizer/tokenizer.json`），**不是 Qwen**。
-  512 上限两路都有，但 Anima 的条件序列长度由 T5 决定（适配器按 T5 的位置生成条件向量），
-  而同一段英文 T5 切得比 Qwen 多，所以先撞线的是 T5。只数 Qwen 会漏报。
-- 超预算时校验器会一并报出 tag 层占多少、NL 还剩多少预算；处置办法见 `references/格式规范.md` §五。
-- tokenizer 不可用时退化成粗估，输出里标 `estimate(rough)`；文本含中文等 T5 表示不了的字符时标 `+unk` 并报警。
+> 💡 **落盘调试规范**：
+> 如果需要查看每个 tag 的具体置信度打分，**严禁散落在根目录下**！请统一收敛在 `.work/` 临时目录：
+> ```powershell
+> New-Item -ItemType Directory -Force -Path "$SKILL\.work" | Out-Null
+> & $PY "$SKILL\tools\wd_tagger.py" <图片路径> --general 0.35 --character 0.85 --json | Out-File "$SKILL\.work\run.json" -Encoding utf8
+> & $PY "$SKILL\tools\anima_validate.py" --tagger-json "$SKILL\.work\run.json"
+> ```
 
-## 按需读取
+### 终稿全量校验（必须跑！）
 
-- `references/格式规范.md` —— 落笔前必读
-- `references/反推分支.md` —— 有图时
-- `references/创作分支.md` —— 没图时
+在组装好最终 tag 和写好末尾的自然语言（NL）后，正式交付用户前必须跑一次终验：
+
+```powershell
+& $PY "$SKILL\tools\anima_validate.py" --tags "<排好序的完整tag串>" --nl "<末尾的自然语言段落>"
+```
+
+- 退出码为 **0**：安全通过，放心交付；
+- 退出码为 **1**：发现槽位冲突或 Token 突破 512 上限，必须按照 `references/格式规范.md` 砍短 NL 重新校验！
+
+---
+
+## 进阶与分支规范
+
+- 拿到图片该怎么看、怎么挑词、怎么写光影？👉 查看 `references/反推分支.md`
+- 只有一两句模糊需求该怎么构思、怎么防串味？👉 查看 `references/创作分支.md`
+- 槽位顺序、排版示例、标点规则与违禁清单？👉 查看 `references/格式规范.md`
