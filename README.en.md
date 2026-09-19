@@ -101,8 +101,6 @@ Use strong sunlight bursting from the upper left behind the umbrella, water drop
 glittering in the backlight and the wet ground mirroring the sky.
 ```
 
-> **Punctuation**: Tags are always joined with `", "`; each NL sentence is a complete English sentence, separated and terminated by a period `.` rather than a comma. Lines are wrapped for readability only — wrapping was verified to yield byte-identical token ids, so it changes nothing.
->
 > **Design Principle**: Prohibits generic quality boosters (`masterpiece`, `best quality`), artist tags, and negative prompts, ensuring clean, direct model conditioning.
 
 ## Quick Install
