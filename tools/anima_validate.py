@@ -58,6 +58,8 @@ def count_tokens(text: str) -> tuple[int | None, str]:
     if env := os.environ.get("ANIMA_TOKENIZER"):
         cand.append(Path(env))
     cand.append(HERE.parent / "models" / "t5_tokenizer" / "tokenizer.json")
+    # 支持泛化用户缓存路径 ~/.cache/anima-tagger/models/...
+    cand.append(Path.home() / ".cache" / "anima-tagger" / "models" / "t5_tokenizer" / "tokenizer.json")
     try:
         from tokenizers import Tokenizer  # type: ignore
         for p in cand:
@@ -311,13 +313,23 @@ def find_conflicts(tags: list[str], is_multi: bool = False) -> list[dict]:
 
 # ---------------------------------------------------------------- 读文件
 
-def read_text_sniff(path: Path) -> str:
-    """读文本，容忍 PowerShell 写出的几种编码。
+def read_text_sniff(path: Path | str) -> str:
+    """读文本或标准输入，容忍不同终端写出的几种编码。
 
+    若 path 为 "-" 或等价的标准输入指示，直接从 sys.stdin 读取；
     Windows PowerShell 5.1 的 `>` 写出 UTF-16LE，`Out-File -Encoding utf8` 带 BOM；
     pwsh 7 的 `>` 是 UTF-8 无 BOM。三种都吃，免得使用者先撞一次编码错误。
     """
-    raw = path.read_bytes()
+    if str(path) == "-":
+        if hasattr(sys.stdin, "buffer"):
+            raw = sys.stdin.buffer.read()
+            if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+                return raw.decode("utf-16")
+            return raw.decode("utf-8-sig")
+        return sys.stdin.read()
+
+    p = Path(path)
+    raw = p.read_bytes()
     if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
         return raw.decode("utf-16")
     return raw.decode("utf-8-sig")
@@ -325,7 +337,7 @@ def read_text_sniff(path: Path) -> str:
 
 # ---------------------------------------------------------------- 主流程
 
-def load_tagger_json(path: Path) -> tuple[list[str], dict[str, float]]:
+def load_tagger_json(path: Path | str) -> tuple[list[str], dict[str, float]]:
     data = json.loads(read_text_sniff(path))
     recs = data if isinstance(data, list) else [data]
     tags: list[str] = []
@@ -345,7 +357,7 @@ def load_tagger_json(path: Path) -> tuple[list[str], dict[str, float]]:
 
 def per_record(args) -> int:
     """对多图 JSON 逐张校验，输出一张汇总表（E2E 用）。"""
-    data = json.loads(read_text_sniff(Path(args.tagger_json)))
+    data = json.loads(read_text_sniff(args.tagger_json))
     data = data if isinstance(data, list) else [data]
     rows = []
     rc = 0
@@ -383,7 +395,7 @@ def main() -> int:
 
     ap = argparse.ArgumentParser()
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--tagger-json", type=Path, help="wd_tagger.py --json 的输出文件")
+    src.add_argument("--tagger-json", type=str, help="wd_tagger.py --json 的输出文件路径，支持 '-' 表示从标准输入 stdin 读取")
     src.add_argument("--tags", help="逗号分隔的 tag 串")
     ap.add_argument("--nl", default="", help="自然语言段（一起算 token）")
     ap.add_argument("--multi", action="store_true", help="强制多人模式（正常会自动探测）")

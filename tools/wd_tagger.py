@@ -20,13 +20,25 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageOps
 
-DEFAULT_MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "wd-eva02-tagger-2026-canary-onnx-v2"
+def get_default_model_dir() -> Path:
+    if env := os.environ.get("ANIMA_MODEL_DIR"):
+        return Path(env)
+    local_path = Path(__file__).resolve().parent.parent / "models" / "wd-eva02-tagger-2026-canary-onnx-v2"
+    if (local_path / "model.onnx").exists():
+        return local_path
+    cache_path = Path.home() / ".cache" / "anima-tagger" / "models" / "wd-eva02-tagger-2026-canary-onnx-v2"
+    if (cache_path / "model.onnx").exists():
+        return cache_path
+    return local_path
+
+DEFAULT_MODEL_DIR = get_default_model_dir()
 RATING, GENERAL, CHARACTER = 9, 0, 4
 
 
