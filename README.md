@@ -101,8 +101,6 @@ Use strong sunlight bursting from the upper left behind the umbrella, water drop
 glittering in the backlight and the wet ground mirroring the sky.
 ```
 
-> **标点规范**：Tag 层一律用 `", "` 分隔；末尾 NL 段每句都是完整英文句，句间与句末都用英文句号 `.`，不要写成逗号。上面的折行只是为了好读——**实测折行前后整段分词逐 id 完全相同**，不影响结果。
->
 > **纯净原则**：本工具拒绝产出无效的质量前缀（`masterpiece`, `best quality` 等）、画师 tag 及负面提示词，专注把控构图与细节生成。
 
 ## 快速安装
