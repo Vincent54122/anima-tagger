@@ -102,6 +102,8 @@ glittering in the backlight and the wet ground mirroring the sky.
 ```
 
 > **Design Principle**: Prohibits generic quality boosters (`masterpiece`, `best quality`), artist tags, and negative prompts, ensuring clean, direct model conditioning.
+>
+> **WYSIWYG only**: Every word in the prompt is something the model will draw. The prompt's sole source of truth is the final frame — the user's wording, the shooting setup, and camera reasoning are scaffolding to internalize first, never to copy in; no off-frame apparatus, and no negative phrasing such as "no X in frame".
 
 ## Quick Install
 

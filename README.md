@@ -102,6 +102,8 @@ glittering in the backlight and the wet ground mirroring the sky.
 ```
 
 > **纯净原则**：本工具拒绝产出无效的质量前缀（`masterpiece`, `best quality` 等）、画师 tag 及负面提示词，专注把控构图与细节生成。
+>
+> **所见即所得**：提示词只写最终画面里看得见的东西——用户原话、拍摄方式、机位推理都只是脚手架，得先内化成“画面上是什么”才准落笔；不写镜头外的装置，也不写“画面里没有××”这类负向句。
 
 ## 快速安装
 
