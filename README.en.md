@@ -14,9 +14,10 @@
 
 Modern anime diffusion models like Anima use dual-channel text conditioning (Qwen/T5 tokens paired with natural language). Crafting robust prompts requires strictly adhering to vocabulary standards, maintaining precise slot order, and staying within the hardware 512-token limit to avoid tail truncation.
 
-`anima-tagger` operates both as an **Agent Skill** (compliant with the [Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills) specification) and an independent CLI toolchain. It provides seamless bidirectional prompt generation:
+`anima-tagger` operates both as an **Agent Skill** (compliant with the [Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills) specification) and an independent CLI toolchain. It provides three prompt-generation paths:
 - **Reverse Branch (Image to Prompt)**: Extracts high-confidence Danbooru tags via local WD EVA02, resolves low-confidence features with vision confirmation, and deterministically normalizes the output.
 - **Creation Branch (Text to Prompt)**: Deconstructs abstract requirements into a production breakdown (Scriptwriter → Director → Key Animation → Cinematographer), assembling canonical tags and spatial/lighting NL sentences.
+- **Expansion Branch (Prompt to Detailed Long Draft)**: Rewrites an existing prompt or tag set into a three-part draft (Tag Anchors → Layered Detail → Refined Master) for long-prompt channels such as Krea2 that are not capped at 512 tokens, so **no length validation is performed**.
 
 ## Highlights
 
@@ -25,43 +26,45 @@ Modern anime diffusion models like Anima use dual-channel text conditioning (Qwe
 | **Machine-Tagged Accuracy** | Tags are drawn exclusively from a 16,473-label WD EVA02 vocabulary, eliminating LLM hallucination of invalid Danbooru tags. |
 | **Tiered Confidence Decisions** | Tags scoring ≥ 0.8 are accepted unconditionally; only tags scoring < 0.8 undergo visual verification. |
 | **Deterministic Validation** | `tools/anima_validate.py` handles hypernym folding, underscore cleaning, slot conflict resolution, and canonical ordering without LLM non-determinism. |
-| **T5 Token Budgeting** | Anima truncates prompts strictly past 512 tokens. The bundled T5 tokenizer ensures accurate token counts, preventing critical NL descriptions from being clipped. |
+| **T5 Token Budgeting** | Anima truncates prompts strictly past 512 tokens. The bundled T5 tokenizer ensures accurate token counts, preventing critical NL descriptions from being clipped. The Expansion Branch targets channels without the 512 cap — pass `--no-token-limit` to skip the length check. |
 | **Lightweight CPU Execution** | Optimized ONNX models run entirely on CPU in seconds, leaving your GPU VRAM untouched for image generation. |
 
 ## Architecture
 
 ```text
-┌─────────────────────────┐               ┌─────────────────────────┐
-│       Input: Image      │               │   Input: Text Request   │
-└────────────┬────────────┘               └────────────┬────────────┘
-             │                                         │
-             ▼                                         ▼
-┌─────────────────────────┐               ┌─────────────────────────┐
-│     Reverse Branch      │               │     Creation Branch     │
-│  wd_tagger.py (CPU)     │               │  LLM Scene Breakdown    │
-│  16,473 Label Lexicon   │               │  Script → Direct → Lens │
-└────────────┬────────────┘               └────────────┬────────────┘
-             │ Confidence Scores                       │
-             ▼                                         │
-┌─────────────────────────┐                            │
-│   Agent Visual Check    │                            │
-│  ≥0.8 Accepted directly │                            │
-│  <0.8 Verified on image │                            │
-└────────────┬────────────┘                            │
-             │                                         │
-             └────────────────────┬────────────────────┘
-                                  ▼
-                    ┌───────────────────────────┐
-                    │     anima_validate.py     │
-                    │ 1. Normalize & fold terms │
-                    │ 2. Resolve slot conflicts │
-                    │ 3. Measure T5 token cost  │
-                    └─────────────┬─────────────┘
-                                  ▼
-                    ┌───────────────────────────┐
-                    │       Final Prompt        │
-                    │  Danbooru Tags + Clean NL │
-                    └───────────────────────────┘
+┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
+│     Input: Image    │  │    Input: Text      │  │   Input: Prompt     │
+└──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘
+           │                        │                        │
+           ▼                        ▼                        ▼
+┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
+│   Reverse Branch    │  │   Creation Branch   │  │  Expansion Branch   │
+│  wd_tagger.py (CPU) │  │  LLM Breakdown      │  │  LLM Expansion      │
+│  16,473 Labels      │  │  Script → Lens      │  │  Tags → Layers → NL │
+└──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘
+           │ Confidence Scores      │                        │
+           ▼                        │                        │
+┌─────────────────────┐             │                        │
+│  Agent Visual Check │             │                        │
+│   ≥0.8 Accepted     │             │                        │
+│  <0.8 Verified      │             │                        │
+└──────────┬──────────┘             │                        │
+           │                        │                        │
+           └───────────┬────────────┴────────────────────────┘
+                       ▼
+         ┌───────────────────────────┐
+         │     anima_validate.py     │
+         │ 1. Normalize & fold terms │
+         │ 2. Resolve slot conflicts │
+         │ 3. Measure T5 token cost  │
+         │ 4. Skip 512-token limit   │
+         └─────────────┬─────────────┘
+                       ▼
+         ┌───────────────────────────┐
+         │        Final Prompt       │
+         │  Danbooru Tags + Clean NL │
+         │  or 3-part Expansion Draft│
+         └───────────────────────────┘
 ```
 
 ## Input Example
@@ -128,6 +131,7 @@ python tools/setup.py --check
 Place the repository in your Agent's skills directory. When the agent loads `SKILL.md`, it automatically selects the optimal workflow:
 - Image provided ➔ executes the tagger and verifies features.
 - Text request provided ➔ crafts structured tags and scene directions.
+- Existing prompt to enrich ➔ runs the expansion workflow and returns a three-part long draft (no length check).
 
 ### 2. Standalone CLI Usage
 
@@ -157,6 +161,7 @@ New-Item -ItemType Directory -Force -Path ".work" | Out-Null
 | `tools/wd_tagger.py <images...> --json` | Runs local ONNX tagger; emits per-tag confidence scores |
 | `tools/anima_validate.py --tagger-json <json>` | Cleans tags, folds hypernyms, checks conflicts, counts tokens |
 | `tools/anima_validate.py --tags "..." --nl "..."` | Full check on final prompt ensuring it fits the 512-token limit |
+| `tools/anima_validate.py --tags "..." --no-token-limit` | Expansion Branch: still folds terms and checks slot conflicts, but skips the 512-token check |
 
 ## Repository Layout
 
@@ -166,7 +171,8 @@ anima-tagger/
 ├── references/                  # Core prompt guidelines and workflows
 │   ├── 格式规范.md              # Format rules, slot orders, and banned tags
 │   ├── 反推分支.md              # Image-to-prompt reverse pipeline
-│   └── 创作分支.md              # Text-to-prompt creative breakdown
+│   ├── 创作分支.md              # Text-to-prompt creative breakdown
+│   └── 扩写分支.md              # Prompt-to-draft expansion (no 512-token cap)
 ├── tools/                       # Python toolchain
 │   ├── setup.py                 # Idempotent setup and weight downloader
 │   ├── wd_tagger.py             # ONNX CPU tagging engine
@@ -186,7 +192,7 @@ anima-tagger/
   python tools/setup.py
   ```
 - **Token `+unk` Warning**: Indicates characters outside the T5 vocabulary (e.g., non-Latin or unsupported symbols). Ensure prompts are composed in clean English.
-- **Token Budget Exceeded**: When token count exceeds `512`, **do not reduce tags**. Tags provide essential anchors. Shorten or merge the natural language sentences at the end instead.
+- **Token Budget Exceeded**: When token count exceeds `512`, **do not reduce tags**. Tags provide essential anchors. Shorten or merge the natural language sentences at the end instead. (The Expansion Branch is exempt: add `--no-token-limit` and shorten nothing.)
 
 ## License
 

@@ -12,8 +12,11 @@
     python anima_validate.py --tags "1girl, solo, long_hair"
     # NL 段也一起算 token
     python anima_validate.py --tagger-json x.json --nl "Place the subject slightly right of center."
+    # 不受 512 约束的通道（扩写分支）：只查形式，不做长度判定
+    python anima_validate.py --tags "1girl, solo, ..." --no-token-limit
 
 退出码: 0=无问题, 1=有需要人工处理的冲突/超预算, 2=输入错误
+（带 --no-token-limit 时不会有"超预算"这一项，退出码 1 只剩槽位冲突与非法字符）
 """
 from __future__ import annotations
 
@@ -373,12 +376,13 @@ def per_record(args) -> int:
         conflicts = find_conflicts(folded, is_multi=is_multi)
         text = SEP.join(folded)
         n_tok, how = count_tokens(text)
-        if conflicts or (n_tok or 0) > TOKEN_LIMIT:
+        if conflicts or (not args.no_token_limit and (n_tok or 0) > TOKEN_LIMIT):
             rc = 1
         rows.append({
             "image": Path(rec.get("image", "?")).name,
             "in": len(tags), "folded": len(folded), "dropped": len(drops),
             "tokens": n_tok, "token_method": how,
+            "token_limit_enforced": not args.no_token_limit,
             "is_multi": is_multi, "markers": markers,
             "conflicts": [f"{c['slot']}: " + " | ".join(c["candidates"]) for c in conflicts],
         })
@@ -399,6 +403,9 @@ def main() -> int:
     src.add_argument("--tags", help="逗号分隔的 tag 串")
     ap.add_argument("--nl", default="", help="自然语言段（一起算 token）")
     ap.add_argument("--multi", action="store_true", help="强制多人模式（正常会自动探测）")
+    ap.add_argument("--no-token-limit", action="store_true",
+                    help="跳过 512 token 预算判定（扩写分支用：目标通道不受 T5 上限约束）；"
+                         "规范化、上位词折叠与槽位冲突照常检查，仍会打印 token 数仅供参考")
     ap.add_argument("--per-record", action="store_true",
                     help="输入是 wd_tagger 的多图 JSON 时，逐张图分别校验（E2E 用）")
     ap.add_argument("--proposed", type=Path,
@@ -466,7 +473,7 @@ def main() -> int:
     tag_tok: int | None = None
     if tag_text and args.nl:
         tag_tok, _ = count_tokens(tag_text)
-    if n_tok is not None and n_tok > TOKEN_LIMIT:
+    if not args.no_token_limit and n_tok is not None and n_tok > TOKEN_LIMIT:
         msg = f"token 超预算：{n_tok} > {TOKEN_LIMIT}（超出 {n_tok - TOKEN_LIMIT}，{how}）"
         if tag_tok is not None:
             # 实测（0.35 阈值、24 张图）：最复杂的图 tag 层也只到 291，离 512 有 221 余量。
@@ -496,6 +503,7 @@ def main() -> int:
         "final_tags": folded,
         "final_text": text,
         "tokens": {"count": n_tok, "method": how, "limit": TOKEN_LIMIT,
+                   "limit_enforced": not args.no_token_limit,
                    "over_by": max(0, (n_tok or 0) - TOKEN_LIMIT),
                    "tag_layer_only": tag_tok},
         "audit": audit,
@@ -520,8 +528,11 @@ def main() -> int:
             print("\n[槽位冲突 · 需人工定夺]")
             for c in conflicts:
                 print(f"  * {c['slot']}: {' | '.join(c['candidates'])}")
-        tok_line = f"\n[token] {n_tok} （{how}） / 上限 {TOKEN_LIMIT}"
-        if tag_tok is not None:
+        if args.no_token_limit:
+            tok_line = f"\n[token] {n_tok} （{how}） / 上限 {TOKEN_LIMIT}　·　--no-token-limit：本分支不校验长度"
+        else:
+            tok_line = f"\n[token] {n_tok} （{how}） / 上限 {TOKEN_LIMIT}"
+        if tag_tok is not None and not args.no_token_limit:
             tok_line += f"　·　tag 层 {tag_tok}　→　NL 最多 {TOKEN_LIMIT - tag_tok}"
         print(tok_line)
         print("\n[最终 tag] " + SEP.join(folded))
