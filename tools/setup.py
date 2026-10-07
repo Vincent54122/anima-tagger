@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""anima-tagger 一键部署：建 venv → 装依赖 → 下载模型与许可证 → 校验。
+"""anima-tagger 一键部署：建 venv → 装依赖 → 按设备安装 PixAI 模型与依赖 → 校验。
 
 用法:
     python tools/setup.py              全自动（推荐）
@@ -11,16 +11,11 @@
     PowerShell :  $env:HF_ENDPOINT = "https://hf-mirror.com"
     bash/zsh   :  export HF_ENDPOINT=https://hf-mirror.com
 
-为什么模型不入库：单个 model.onnx 约 1.22 GiB，超过 GitHub 单文件上限，
-必须走 LFS 或 Release。本脚本按**钉死的 revision** 拉取，保证
-selected_tags.csv 与 model.onnx 是同一版本——两者错配时 wd_tagger.py
-只会报"输出维度 != 标签数"，很难自己 debug 出来。
 """
 from __future__ import annotations
 
 import argparse
-import csv
-import hashlib
+import json
 import os
 import re
 import subprocess
@@ -29,28 +24,63 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- 常量
 
-ROOT = Path(__file__).resolve().parent.parent
-VENV = ROOT / ".venv"
-MODEL_DIR = ROOT / "models" / "wd-eva02-tagger-2026-canary-onnx-v2"
+try:
+    from .pixai_config import ROOT, MODEL_DIR, MODEL_REPO, MODEL_REVISION, MODEL_HASHES, CATEGORY_COUNTS, verify_assets, CPU_MODEL_DIR, CPU_MODEL_REPO, CPU_MODEL_REVISION, CPU_MODEL_HASHES
+except ImportError:
+    from pixai_config import ROOT, MODEL_DIR, MODEL_REPO, MODEL_REVISION, MODEL_HASHES, CATEGORY_COUNTS, verify_assets, CPU_MODEL_DIR, CPU_MODEL_REPO, CPU_MODEL_REVISION, CPU_MODEL_HASHES
+
+VENV = ROOT / ".venv-pixai-gpu"
 TOKENIZER = ROOT / "models" / "t5_tokenizer" / "tokenizer.json"
 REQUIREMENTS = ROOT / "tools" / "requirements.txt"
-
-MODEL_REPO = "Misaka41Z/wd-eva02-tagger-2026-canary-onnx-v2"
-MODEL_REVISION = "0a86acfa093b33b8818667820e52fc5eccf27ff8"
-MODEL_FILES = ("model.onnx", "selected_tags.csv")
-
-# 模型本体（作者）那条线：授权与 LICENSE 文本的来源。ONNX 仓库只做格式转换、未附 LICENSE，
-# 所以许可按这一份走。
-LICENSE_REPO = "ashen-sensored/wd-eva02-tagger-2026-canary"
-LICENSE_REVISION = "c45a59a3f17c0ca6066072b1c213e0c12a90e242"
-
-EXPECTED_TAGS = 16473           # 词表行数；必须等于 model.onnx 的输出维度
-MODEL_SHA256 = "fd78fbdf9390cbd163e4dd28f754a5bbf83bc7a111c4d20270f22415a0f66c95"
-TAGS_SHA256 = "3f78c28ee0d50779edb320733f76aeaf4184694cbd09c631deef6889865f9178"
-MIN_ONNX_BYTES = 1_000_000_000  # 约 1.22 GiB，只用来发现"下了半个文件"
+MODEL_FILES = tuple(MODEL_HASHES)
 MIN_TOKENIZER_BYTES = 1_000_000
-INSTALL_EXTRA = "huggingface_hub>=0.23"   # 只有本脚本用，运行时不需要
-REQUIRED_MODULES = ("onnxruntime", "PIL", "numpy", "tokenizers")  # 打标/校验真正要 import 的
+INSTALL_EXTRA = "huggingface_hub==0.36.2"
+REQUIRED_MODULES = ("torch", "torchvision", "transformers", "timm", "onnxruntime", "PIL", "numpy", "tokenizers")
+BACKEND = "cuda"
+GPU_MODULES = REQUIRED_MODULES
+GPU_ASSETS = (MODEL_DIR, MODEL_REPO, MODEL_REVISION, MODEL_HASHES)
+CPU_MODULES = ("onnxruntime", "PIL", "numpy", "tokenizers")
+
+
+def select_backend(py, requested="auto", *, installing=False):
+    if requested != "auto":
+        return requested
+    if py.exists():
+        probe = subprocess.run([str(py), "-c", "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)"],
+                               capture_output=True, timeout=60)
+        if probe.returncode == 0:
+            return "cuda"
+    if installing:
+        try:
+            probe = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                                   capture_output=True, timeout=15)
+            if probe.returncode == 0 and probe.stdout.strip():
+                return "cuda"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return "cpu"
+
+
+def configure_backend(backend):
+    global BACKEND, MODEL_DIR, MODEL_REPO, MODEL_REVISION, MODEL_FILES, REQUIRED_MODULES, REQUIREMENTS
+    BACKEND = backend
+    if backend == "cpu":
+        MODEL_DIR, MODEL_REPO, MODEL_REVISION = CPU_MODEL_DIR, CPU_MODEL_REPO, CPU_MODEL_REVISION
+        MODEL_FILES = tuple(CPU_MODEL_HASHES)
+        REQUIRED_MODULES = CPU_MODULES
+        REQUIREMENTS = ROOT / "tools" / "requirements-cpu.txt"
+    else:
+        MODEL_DIR, MODEL_REPO, MODEL_REVISION, hashes = GPU_ASSETS
+        MODEL_FILES = tuple(hashes)
+        REQUIRED_MODULES = GPU_MODULES
+        REQUIREMENTS = ROOT / "tools" / "requirements.txt"
+
+
+def asset_problems(weights=False):
+    problems = verify_assets(MODEL_DIR, weights=weights, cpu=BACKEND == "cpu")
+    if BACKEND == "cuda":
+        problems += verify_assets(CPU_MODEL_DIR, weights=weights, cpu=True)
+    return problems
 
 RULE = "=" * 68
 
@@ -79,38 +109,8 @@ def human(n: int) -> str:
     return f"{n / 1024 ** 3:.2f} GiB" if n >= 1 << 30 else f"{n / 1024 ** 2:.1f} MiB"
 
 
-def count_tag_rows(csv_path: Path) -> int:
-    """数 selected_tags.csv 的数据行（不含表头）。"""
-    with open(csv_path, encoding="utf-8", newline="") as f:
-        return sum(1 for _ in csv.DictReader(f))
-
-
-def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(chunk), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
 def verify_hashes() -> list[str]:
-    """逐字节核对 revision。比"大小 + 行数"更强，但要读完 1.3 GiB，故默认不做。"""
-    problems: list[str] = []
-    pairs = (
-        (MODEL_DIR / "model.onnx", MODEL_SHA256),
-        (MODEL_DIR / "selected_tags.csv", TAGS_SHA256),
-    )
-    for path, expected in pairs:
-        if not path.exists():
-            continue  # 缺失已由 collect_problems 报过，别重复
-        print(f"      算 {path.name} 的 SHA256 …")
-        got = sha256_file(path)
-        if got.lower() != expected.lower():
-            problems.append(
-                f"{path.name} SHA256 不符：期望 {expected[:12]}…，实际 {got[:12]}…"
-                f"——文件不是钉死的那个 revision"
-            )
-    return problems
+    return asset_problems(weights=True)
 
 
 # ---------------------------------------------------------------- 体检
@@ -158,25 +158,15 @@ def collect_problems(py: Path, require_venv: bool) -> list[str]:
                 + "——跑 `python tools/setup.py` 重装（**别加 --skip-deps**）"
             )
 
-    onnx = MODEL_DIR / "model.onnx"
-    if not onnx.exists():
-        problems.append(f"缺模型权重：{onnx.relative_to(ROOT)}")
-    elif onnx.stat().st_size < MIN_ONNX_BYTES:
-        problems.append(
-            f"model.onnx 只有 {human(onnx.stat().st_size)}，疑似没下完"
-            f"（应为约 1.22 GiB）——删掉整个模型目录重跑"
-        )
-
-    tags = MODEL_DIR / "selected_tags.csv"
-    if not tags.exists():
-        problems.append(f"缺词表：{tags.relative_to(ROOT)}")
-    else:
-        rows = count_tag_rows(tags)
-        if rows != EXPECTED_TAGS:
-            problems.append(
-                f"selected_tags.csv 有 {rows} 行，应为 {EXPECTED_TAGS} 行——"
-                f"模型与词表版本错配，必须删掉重下（不要改这个期望值去迁就）"
-            )
+    problems.extend(asset_problems())
+    if BACKEND == "cuda" and py.exists():
+        probe = subprocess.run([str(py), "-c", "import torch; "
+            "print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CUDA unavailable'); "
+            "raise SystemExit(0 if torch.cuda.is_available() else 1)"],
+            capture_output=True, text=True, timeout=60)
+        print(probe.stdout.strip())
+        if probe.returncode:
+            problems.append("Requested CUDA is unavailable; use --device cpu or --device auto")
 
     if not TOKENIZER.exists():
         problems.append(
@@ -196,6 +186,7 @@ def print_report(py: Path, problems: list[str], *, show_next_step: bool) -> int:
     print(f"skill 根目录 : {ROOT}")
     print(f"python       : {py}")
     print(f"模型目录     : {MODEL_DIR}")
+    print(f"运行路线     : {BACKEND} (CUDA deployments also include ONNX CPU fallback)")
     print(f"HF 端点      : {os.environ.get('HF_ENDPOINT', 'https://huggingface.co')}")
     print(RULE)
 
@@ -211,9 +202,9 @@ def print_report(py: Path, problems: list[str], *, show_next_step: bool) -> int:
     print(RULE)
     if show_next_step:
         print("打标 + 校验：")
-        print(f'  & "{py}" "{ROOT / "tools" / "wd_tagger.py"}" <图片> `')
-        print("      --general 0.35 --character 0.85 --json > run.json")
-        print(f'  & "{py}" "{ROOT / "tools" / "anima_validate.py"}" --tagger-json run.json')
+        print(f'  & "{py}" "{ROOT / "tools" / "pixai_tagger.py"}" <图片> `')
+        print(f"      --device {BACKEND} --general 0.17 --character 0.27 --json > .work/run.json")
+        print(f'  & "{py}" "{ROOT / "tools" / "anima_validate.py"}" --tagger-json .work/run.json')
     return 0
 
 
@@ -237,10 +228,11 @@ def install_deps(py: Path) -> None:
     if not REQUIREMENTS.exists():
         raise SystemExit(f"找不到 {REQUIREMENTS}")
     subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip", "-q"], check=False)
-    subprocess.run(
-        [str(py), "-m", "pip", "install", "-r", str(REQUIREMENTS), INSTALL_EXTRA],
-        check=True,
-    )
+    if BACKEND == "cuda":
+        subprocess.run([str(py), "-m", "pip", "install", "torch==2.8.0+cu128", "torchvision==0.23.0+cu128",
+                        "--index-url", "https://download.pytorch.org/whl/cu128"], check=True)
+    subprocess.run([str(py), "-m", "pip", "install", "-r", str(REQUIREMENTS), INSTALL_EXTRA], check=True)
+
 
 
 # ------------------------------------------------- 下载前的代理环境体检
@@ -311,79 +303,24 @@ def ensure_download_env() -> None:
 
 
 def fetch_model() -> None:
-    """必须在装好 huggingface_hub 的解释器里执行。"""
     ensure_download_env()
-    onnx = MODEL_DIR / "model.onnx"
-    if onnx.exists() and onnx.stat().st_size >= MIN_ONNX_BYTES:
-        print(f"[3/4] 权重已在位（{human(onnx.stat().st_size)}），跳过下载")
-        return
-
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
-        raise SystemExit(
-            "缺 huggingface_hub。请按正常流程跑 setup.py（会自动装），"
-            f"或手动：pip install \"{INSTALL_EXTRA}\""
-        )
-
-    endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[3/4] 下载 {MODEL_REPO}")
-    print(f"      revision {MODEL_REVISION[:12]}   源 {endpoint}")
-    print("      约 1.22 GiB，支持断点续传；慢是正常的，别中断它")
-
-    try:
-        snapshot_download(
-            repo_id=MODEL_REPO,
-            revision=MODEL_REVISION,
-            local_dir=str(MODEL_DIR),
-            allow_patterns=list(MODEL_FILES),
-        )
-    except Exception as exc:  # 网络 / 镜像 / 磁盘都走这里
-        print(f"\n!! 下载失败：{type(exc).__name__}: {exc}", file=sys.stderr)
-        print(
-            "\n请依次尝试：\n"
-            '  1) 设镜像后重跑：$env:HF_ENDPOINT = "https://hf-mirror.com"; python tools/setup.py\n'
-            "  2) 检查磁盘剩余空间（需要约 1.3 GiB）\n"
-            f"  3) 手动下载 https://huggingface.co/{MODEL_REPO}/tree/{MODEL_REVISION}\n"
-            f"     把 model.onnx 与 selected_tags.csv 放进：{MODEL_DIR}\n"
-            "  4) 不要改用别的 tagger 模型——词表和 0.35/0.85 阈值都是照这份标定的",
-            file=sys.stderr,
-        )
-        raise SystemExit(3)
-
-
-def fetch_license() -> None:
-    """取回模型作者随附的 Apache-2.0 文本。
-
-    许可的来源是模型本体那条线（ashen-sensored），不是 ONNX 转换仓库——后者没放 LICENSE。
-    这一步只影响授权文件的完整性，取不到也能正常打标，所以失败只警告、不中断。
-    """
-    dest = MODEL_DIR / "LICENSE"
-    if dest.exists() and dest.stat().st_size > 0:
-        print(f"[3/4] LICENSE 已在位（{dest.name}），跳过")
-        return
-
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
-        return  # fetch_model 已经报过这个错，别重复喊
-
-    endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
-    print(f"[3/4] 取回 {LICENSE_REPO} 的 LICENSE　源 {endpoint}")
-    try:
-        snapshot_download(
-            repo_id=LICENSE_REPO,
-            revision=LICENSE_REVISION,
-            local_dir=str(MODEL_DIR),
-            allow_patterns=["LICENSE"],
-        )
-    except Exception as exc:  # 网络 / 镜像问题都不该挡住打标
-        print(
-            f"[3/4] LICENSE 取回失败（不影响使用）：{type(exc).__name__}: {exc}\n"
-            f"      可稍后重跑本脚本，或手动从 https://huggingface.co/{LICENSE_REPO} 取。",
-            file=sys.stderr,
-        )
+    from huggingface_hub import snapshot_download
+    assets = [(MODEL_DIR, MODEL_REPO, MODEL_REVISION, MODEL_FILES, BACKEND == "cpu")]
+    if BACKEND == "cuda":
+        assets.append((CPU_MODEL_DIR, CPU_MODEL_REPO, CPU_MODEL_REVISION, tuple(CPU_MODEL_HASHES), True))
+    for directory, repo, revision, files, cpu in assets:
+        if not verify_assets(directory, weights=True, cpu=cpu):
+            print(f"[3/4] Verified assets already available: {repo}")
+            continue
+        print(f"[3/4] Downloading pinned {repo}@{revision[:12]} (about 1.9 GiB)")
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            snapshot_download(repo_id=repo, revision=revision, local_dir=str(directory), allow_patterns=list(files))
+        except Exception as exc:
+            raise SystemExit(f"Download failed: {exc}. Retry setup, or set HF_ENDPOINT to a reachable mirror.")
+        problems = verify_assets(directory, weights=True, cpu=cpu)
+        if problems:
+            raise SystemExit("\n".join(problems))
 
 
 # ---------------------------------------------------------------- 主流程
@@ -395,14 +332,19 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    ap.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto", help="CUDA first; no CUDA uses validated ONNX CPU")
     ap.add_argument("--check", action="store_true", help="只体检，不装不下载")
     ap.add_argument("--no-venv", action="store_true", help="不建 venv，装进当前解释器")
     ap.add_argument("--skip-deps", action="store_true", help="跳过装依赖")
     ap.add_argument("--verify-hash", action="store_true",
-                    help="额外逐字节核对 SHA256（要读 1.3 GiB，慢）")
+                    help="额外逐字节核对 SHA256（要读 1.9 GiB，慢）")
     ap.add_argument("--_in-venv", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
+    target_py = Path(sys.executable) if args.no_venv else venv_python(VENV)
+    backend = select_backend(target_py, args.device, installing=not args.check and not args._in_venv)
+    configure_backend(backend)
+    print(f"Selected inference route: {backend}")
     require_venv = not args.no_venv
 
     def full_report(py: Path, *, show_next_step: bool) -> int:
@@ -414,7 +356,6 @@ def main() -> int:
     if args._in_venv:
         # 子进程：此时解释器就是 venv，huggingface_hub 已可用
         fetch_model()
-        fetch_license()
         print("[4/4] 校验")
         return full_report(Path(sys.executable), show_next_step=True)
 
@@ -432,12 +373,11 @@ def main() -> int:
     if py.resolve() == Path(sys.executable).resolve():
         # 当前解释器就是要用的那个（--no-venv，或用 venv python 直接跑本脚本）
         fetch_model()
-        fetch_license()
         print("[4/4] 校验")
         return full_report(py, show_next_step=True)
 
     # 换 venv 解释器重新执行自己，在装好 huggingface_hub 的那一侧下载并出报告
-    child = [str(py), str(Path(__file__).resolve()), "--_in-venv"]
+    child = [str(py), str(Path(__file__).resolve()), "--_in-venv", "--device", backend]
     if args.verify_hash:
         child.append("--verify-hash")
     sys.stdout.flush()  # 否则子进程的输出会插到上面几行之前

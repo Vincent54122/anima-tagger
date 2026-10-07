@@ -4,21 +4,21 @@
 
 ```
 models/
-├── t5_tokenizer/
-│   └── tokenizer.json                        ← 入库（2.4 MiB，token 计数用）
-└── wd-eva02-tagger-2026-canary-onnx-v2/      ← 不入库，下载落点
-    ├── model.onnx                            （约 1.22 GiB）
-    ├── selected_tags.csv                     （457 KiB）
-    └── LICENSE                               （Apache-2.0，取自模型作者仓库）
+├── t5_tokenizer/tokenizer.json   # bundled prompt tokenizer
+└── pixai-tagger-v1.0-original/   # downloaded, ignored by Git
+    ├── model.safetensors        # 1,945,425,796 bytes (1.81 GiB)
+    ├── config.json              # ordered tags + category splits
+    ├── preprocessor_config.json
+    ├── tagger_pipeline.py       # pinned official model/processor code
+    └── README.md               # upstream model card
 ```
 
 ## t5_tokenizer/tokenizer.json
 
-入库。**Anima 的 512 上限按这条通道计。**
+入库。本项目针对的 Anima 配置按这条通道核算 512 预算。下述架构说明适用于本项目的目标配置；使用其他模型版本或前端时，应核对实际编码方式和截断设置。
 
 来源 `google/t5-v1_1-xxl` 的 `spiece.model`（SentencePiece），转成 `tokenizer.json`
-格式以便复用已有的 `tokenizers` 依赖、不再额外引入 `sentencepiece`。
-转换后已逐条核对：与官方 `T5Tokenizer` 对同一批文本的编码结果**逐个 token id 相同**。
+格式，使用 `tokenizers` 依赖进行计数，无需额外安装 `sentencepiece`。
 
 | 项 | 值 |
 |---|---|
@@ -43,71 +43,25 @@ context = source_hidden_states                   # 内容 = Qwen 读出来的
 
 所以**条件序列有多长由 T5 决定**，而两条通道各自独立截断到 512
 （`text_encoding.py` 里 T5 那路 `ids[:512]`、Qwen 那路 `truncation=True, max_length=512`）。
-同一段英文 T5 切得比 Qwen 多，**先撞线的是 T5**：
-
-| 同一段文字 | Qwen | T5 |
-|---|---|---|
-| tag 串 | 53 | 54 |
-| 英文自然语言 | 25 | 28 |
-| 长提示词 | 181 | 210 |
-
-只数 Qwen 会漏报：报「480/512 安全」的时候，T5 那路已经砍掉了尾巴——而被砍的是
-槽位顺序最后的 NL。
+两条通道的 token 数可能不同。预算检查应使用目标通道的分词器，不能用 Qwen 的计数代替 T5；实际截断设置以所用模型和前端为准。
 
 ### 一个限制
 
-T5 词表只覆盖拉丁字母语言（英/德/法/罗）。中文、日文等会落到 `<unk>`，
-**内容在这一路直接丢失**。校验器检测到 `<unk>` 会标 `+unk` 并报警。
+当前分词器对无法表示的字符会产生 `<unk>`，不能从该 token 还原原字符；是否可表示以实际分词结果为准。校验器检测到 `<unk>` 会标 `+unk` 并报警。
 Anima 的提示词应当是英文。
 
 详见 [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
 
-## wd-eva02-tagger-2026-canary-onnx-v2/
+## PixAI 原版模型
 
-下载落点。获取方式：
+运行 `python tools/setup.py` 下载，`--check` 检查 CUDA 环境、词表、代码与配置；`--check --verify-hash` 另核对完整权重 SHA256。
 
-```powershell
-python tools/setup.py
-```
+上游：<https://huggingface.co/pixai-labs/pixai-tagger-v1.0>，固定 revision `9fe10addf9326e292da8a85a98ea74cd91b41771`。
+全部文件哈希保存在 `tools/pixai_config.py`。推理前校验官方代码与配置，只从本地加载；默认 CUDA BF16，支持 FP32。
+使用官方 1008×1008 预处理：等比例缩放、黑色补边、RGB 归一化；透明图先合成白底。EXIF 方向在预处理前纠正。
 
-国内网络先设镜像 `$env:HF_ENDPOINT = "https://hf-mirror.com"`。
+无 CUDA 时使用 PixAI ONNX CPU FP32 推理。模型卡声明 Apache-2.0，详见第三方归属说明。
 
-**不要换成别的 tagger 模型。** 词表、槽位冲突表、`0.35 / 0.85` 阈值全是照这一份标定的。
+## PixAI ONNX CPU 回退
 
-### 钉死的版本
-
-| 文件 | 大小 | SHA256 |
-|---|---|---|
-| `model.onnx` | 1,309,248,037 bytes | `fd78fbdf9390cbd163e4dd28f754a5bbf83bc7a111c4d20270f22415a0f66c95` |
-| `selected_tags.csv` | 467,782 bytes | `3f78c28ee0d50779edb320733f76aeaf4184694cbd09c631deef6889865f9178` |
-
-上游：`Misaka41Z/wd-eva02-tagger-2026-canary-onnx-v2`
-@ `0a86acfa093b33b8818667820e52fc5eccf27ff8`
-
-### 自己核对
-
-```powershell
-python tools/setup.py --check                 # 查存在性 + 大小 + 词表行数（应为 16473）
-python tools/setup.py --check --verify-hash   # 再逐字节核对 SHA256（读 1.3 GiB，慢）
-```
-
-### 为什么必须同版本
-
-`model.onnx` 的输出维度必须等于 `selected_tags.csv` 的行数。两者错配时
-`tools/wd_tagger.py` 只会报一句「输出维度 != 标签数」，很难自己 debug 出来，
-所以 `setup.py` 把 revision 和 SHA256 都钉死了。
-
-### LICENSE
-
-模型本体是 `ashen-sensored/wd-eva02-tagger-2026-canary`，**Apache-2.0**，该仓库随附 `LICENSE`
-文件，`setup.py` 会把它一并取回落进本目录：
-
-| 项 | 值 |
-|---|---|
-| 来源 | `ashen-sensored/wd-eva02-tagger-2026-canary` |
-| revision | `c45a59a3f17c0ca6066072b1c213e0c12a90e242` |
-| 大小 | 11,358 bytes |
-| SHA256 | `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` |
-
-ONNX 仓库（`Misaka41Z/…`）只做了格式转换，自身没有放 `LICENSE` 文件，所以授权以模型作者那份为准。
-授权链的完整描述见 [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
+目录 `models/pixai-tagger-v1.0-onnx/`；上游 `noaione/pixai-tagger-v1.0-onnx`，固定 revision `68e8f4f02dd56a5f40c1b7474489fa0f599dec34`。文件为 `model.onnx`、`model.onnx.data`、`tags.json`、`README.md`，哈希见 `tools/pixai_config.py`。ONNX Runtime 1.30.0、CPUExecutionProvider、默认 8 线程、FP32，采用 PIL 双线性缩放与补边。GPU 部署同时准备这套文件；CPU 部署只需这套。

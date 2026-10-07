@@ -12,22 +12,31 @@
   <img src="https://img.shields.io/badge/Target-Anima-purple?style=flat-square" alt="Target: Anima">
 </p>
 
-Modern anime diffusion models like Anima use dual-channel text conditioning (Qwen/T5 tokens paired with natural language). Crafting robust prompts requires strictly adhering to vocabulary standards, maintaining precise slot order, and staying within the hardware 512-token limit to avoid tail truncation.
+Anima supports tags, natural-language captions, and hybrid prompts. This tool organizes tags and English descriptions consistently and uses the bundled T5 tokenizer to measure ordinary prompts against the default 512-token budget. Multi-character prompts group each subject's appearance, clothing, and actions, then use explicit subjects to describe placement and interaction.
 
 `anima-tagger` operates both as an **Agent Skill** (compliant with the [Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills) specification) and an independent CLI toolchain. It provides three prompt-generation paths:
-- **Reverse Branch (Image to Prompt)**: Extracts high-confidence Danbooru tags via local WD EVA02, resolves low-confidence features with vision confirmation, and deterministically normalizes the output.
+- **Reverse Branch (Image to Prompt)**: Extracts high-confidence Danbooru tags via original PixAI on CUDA, reviews general visual features while accepting all emitted character candidates, and deterministically normalizes the output.
 - **Creation Branch (Text to Prompt)**: Deconstructs abstract requirements into a production breakdown (Scriptwriter → Director → Key Animation → Cinematographer), assembling canonical tags and spatial/lighting NL sentences.
 - **Expansion Branch (Prompt to Detailed Long Draft)**: Rewrites an existing prompt or tag set into a three-part draft (Tag Anchors → Layered Detail → Refined Master) for long-prompt channels such as Krea2 that are not capped at 512 tokens, so **no length validation is performed**.
 
 ## Highlights
 
-| Highlight | Benefit |
+| Feature | What it helps you do |
 |---|---|
-| **Machine-Tagged Accuracy** | Tags are drawn exclusively from a 16,473-label WD EVA02 vocabulary, eliminating LLM hallucination of invalid Danbooru tags. |
-| **Tiered Confidence Decisions** | Tags scoring ≥ 0.8 are accepted unconditionally; only tags scoring < 0.8 undergo visual verification. |
-| **Deterministic Validation** | `tools/anima_validate.py` handles hypernym folding, underscore cleaning, slot conflict resolution, and canonical ordering without LLM non-determinism. |
-| **T5 Token Budgeting** | Anima truncates prompts strictly past 512 tokens. The bundled T5 tokenizer ensures accurate token counts, preventing critical NL descriptions from being clipped. The Expansion Branch targets channels without the 512 cap — pass `--no-token-limit` to skip the length check. |
-| **Lightweight CPU Execution** | Optimized ONNX models run entirely on CPU in seconds, leaving your GPU VRAM untouched for image generation. |
+| **Image, idea, and prompt workflows** | Extract and organize features from a reference image, turn a written idea into a complete prompt, or enrich an existing prompt. The input determines the workflow. |
+| **Tags and natural language working together** | Danbooru tags specify characters, clothing, props, and poses. English prose adds depth, character interactions, and complex lighting, assembled into a consistent prompt structure ready to use. |
+| **Complete scenes from brief ideas** | Develop the subject, cast, action, setting, composition, and lighting step by step. Follow detailed requests faithfully, fill in missing scene elements for loose ideas, and offer distinct directions for open-ended requests. |
+| **Layered detail that preserves your anchors** | Keep the original key settings while expanding composition and pose, hair and accessories, expression, clothing, props, lighting and color, and background. Deliver a three-part draft—tag anchors, seven detail layers, and an integrated refinement—for long-prompt channels without a 512-token cap. |
+| **Descriptions grounded in visible content** | Translate abstract intent into concrete objects, positions, occlusion, materials, and lighting. Keep descriptions focused on the desired frame, avoiding off-frame shooting instructions, invisible psychological explanations, and generic quality boosters. |
+| **Cleanup and checks before delivery** | Deduplicate tags, fold broader terms, normalize formatting, and check known count and attribute conflicts, forbidden content, and prose format. Count ordinary prompts precisely with the T5 tokenizer against the default 512-token budget, trimming redundant prose first while protecting key settings. |
+
+## Multi-character prompts
+
+Arrange tag blocks as subject count, global framing/scene/weather/lighting, character A, character B, and further characters as needed, with blank lines between blocks. Each character block groups appearance, clothing, accessories, props, expressions, and poses. End with English sentences assigning placement and actions explicitly. Named characters also receive basic appearance descriptions.
+
+For image reversal, retain emitted character candidates and use the image to determine subject count, appearance, and placement. The validator checks formatting, conflicts, and budget; the assistant reviews subject ownership and counts the actual grouped final text.
+
+See the [multi-character guide](references/多人提示词.md) for detailed instructions, three examples, and panel guidance.
 
 ## Architecture
 
@@ -39,15 +48,15 @@ Modern anime diffusion models like Anima use dual-channel text conditioning (Qwe
            ▼                        ▼                        ▼
 ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
 │   Reverse Branch    │  │   Creation Branch   │  │  Expansion Branch   │
-│  wd_tagger.py (CPU) │  │  LLM Breakdown      │  │  LLM Expansion      │
-│  16,473 Labels      │  │  Script → Lens      │  │  Tags → Layers → NL │
+│  pixai_tagger.py GPU │  │  LLM Breakdown      │  │  LLM Expansion      │
+│  30,877 Labels      │  │  Script → Lens      │  │  Tags → Layers → NL │
 └──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘
            │ Confidence Scores      │                        │
            ▼                        │                        │
 ┌─────────────────────┐             │                        │
 │  Agent Visual Check │             │                        │
-│   ≥0.8 Accepted     │             │                        │
-│  <0.8 Verified      │             │                        │
+│   Characters accepted     │             │                        │
+│  General tags reviewed      │             │                        │
 └──────────┬──────────┘             │                        │
            │                        │                        │
            └───────────┬────────────┴────────────────────────┘
@@ -78,7 +87,7 @@ Modern anime diffusion models like Anima use dual-channel text conditioning (Qwe
 Reversing the image above yields the same strict format every branch produces — **"tag sequence + spatial/lighting natural language"**:
 
 ```text
-general, 1girl, solo,
+1girl, solo,
 
 short hair, blue hair, blue eyes, parted bangs, bare legs,
 
@@ -104,13 +113,13 @@ Use strong sunlight bursting from the upper left behind the umbrella, water drop
 glittering in the backlight and the wet ground mirroring the sky.
 ```
 
-> **Design Principle**: Prohibits generic quality boosters (`masterpiece`, `best quality`), artist tags, and negative prompts, ensuring clean, direct model conditioning.
+> Use concrete tags and English descriptions for composition, appearance, materials, actions, and lighting.
 >
 > **WYSIWYG only**: Every word in the prompt is something the model will draw. The prompt's sole source of truth is the final frame — the user's wording, the shooting setup, and camera reasoning are scaffolding to internalize first, never to copy in; no off-frame apparatus, and no negative phrasing such as "no X in frame".
 
 ## Quick Install
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer. CUDA is preferred; systems without CUDA use the verified PixAI ONNX CPU route, including Intel/AMD GPU machines. GPU setup installs PyTorch 2.8.0 cu128; CPU setup does not require PyTorch.
 
 ```powershell
 git clone https://github.com/Vincent54122/anima-tagger.git anima-tagger
@@ -118,7 +127,7 @@ cd anima-tagger
 python tools/setup.py
 ```
 
-`setup.py` initializes a self-contained `.venv`, installs dependencies, and downloads the pinned ONNX weights (~1.22 GiB). Verify setup integrity anytime with:
+`setup.py` initializes `.venv-pixai-gpu`, installs dependencies for the selected device, and downloads pinned assets. GPU deployment includes original weights and the ONNX CPU fallback; CPU deployment downloads only ONNX assets. Use `python tools/setup.py --device cpu` to force CPU deployment. Verify setup integrity anytime with:
 
 ```powershell
 python tools/setup.py --check
@@ -138,14 +147,14 @@ Place the repository in your Agent's skills directory. When the agent loads `SKI
 Drive the local tagger and validator directly:
 
 ```powershell
-$PY = ".\.venv\Scripts\python.exe"        # Linux / macOS: ./.venv/bin/python
+$PY = ".\.venv-pixai-gpu\Scripts\python.exe"        # Linux (CUDA): ./.venv-pixai-gpu/bin/python
 
 # 1. Piped tagging & validation (Recommended: streaming pipe without temporary files)
-& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json | & $PY tools\anima_validate.py --tagger-json -
+& $PY tools\pixai_tagger.py photo.png --general 0.17 --character 0.27 --json | & $PY tools\anima_validate.py --tagger-json -
 
 # 2. Or save intermediate artifacts to the managed .work/ temporary directory
 New-Item -ItemType Directory -Force -Path ".work" | Out-Null
-& $PY tools\wd_tagger.py photo.png --general 0.35 --character 0.85 --json | Out-File .work\run.json -Encoding utf8
+& $PY tools\pixai_tagger.py photo.png --general 0.17 --character 0.27 --json | Out-File .work\run.json -Encoding utf8
 & $PY tools\anima_validate.py --tagger-json .work\run.json
 
 # 3. Validate full output including natural language sentences
@@ -158,9 +167,9 @@ New-Item -ItemType Directory -Force -Path ".work" | Out-Null
 |---|---|
 | `python tools/setup.py` | Sets up venv, installs requirements, downloads model weights |
 | `python tools/setup.py --check` | Validates environment and label table (exits 0 if ready) |
-| `tools/wd_tagger.py <images...> --json` | Runs local ONNX tagger; emits per-tag confidence scores |
+| `tools/pixai_tagger.py <images...> --json` | Runs original PixAI CUDA tagger; emits per-tag confidence scores |
 | `tools/anima_validate.py --tagger-json <json>` | Cleans tags, folds hypernyms, checks conflicts, counts tokens |
-| `tools/anima_validate.py --tags "..." --nl "..."` | Full check on final prompt ensuring it fits the 512-token limit |
+| `tools/anima_validate.py --tags "..." --nl "..."` | Known format/conflict checks and exact token budget; semantics and slot arrangement require assistant review |
 | `tools/anima_validate.py --tags "..." --no-token-limit` | Expansion Branch: still folds terms and checks slot conflicts, but skips the 512-token check |
 
 ## Repository Layout
@@ -172,16 +181,17 @@ anima-tagger/
 │   ├── 格式规范.md              # Format rules, slot orders, and banned tags
 │   ├── 反推分支.md              # Image-to-prompt reverse pipeline
 │   ├── 创作分支.md              # Text-to-prompt creative breakdown
+│   ├── 多人提示词.md            # Grouped tags, subject ownership, and examples
 │   └── 扩写分支.md              # Prompt-to-draft expansion (no 512-token cap)
 ├── tools/                       # Python toolchain
 │   ├── setup.py                 # Idempotent setup and weight downloader
-│   ├── wd_tagger.py             # ONNX CPU tagging engine
+│   ├── pixai_tagger.py             # PyTorch CUDA tagging engine
 │   ├── anima_validate.py        # Deterministic validator & tokenizer
 │   └── requirements.txt
 ├── assets/                      # README example images
 └── models/
     ├── t5_tokenizer/            # Bundled T5 tokenizer assets
-    └── wd-eva02-.../            # Downloaded model weights (via setup.py)
+    └── pixai-tagger-v1.0-original/            # Downloaded model weights (via setup.py)
 ```
 
 ## Troubleshooting
@@ -192,9 +202,13 @@ anima-tagger/
   python tools/setup.py
   ```
 - **Token `+unk` Warning**: Indicates characters outside the T5 vocabulary (e.g., non-Latin or unsupported symbols). Ensure prompts are composed in clean English.
-- **Token Budget Exceeded**: When token count exceeds `512`, **do not reduce tags**. Tags provide essential anchors. Shorten or merge the natural language sentences at the end instead. (The Expansion Branch is exempt: add `--no-token-limit` and shorten nothing.)
+- **Token Budget Exceeded**: When token count exceeds `512`, shorten NL first. If tags alone exceed the budget or the prompt still does not fit, reduce redundant and secondary tags while protecting explicit user anchors. (The Expansion Branch is exempt: add `--no-token-limit` and shorten nothing.)
 
 ## License
 
 Released under the [MIT License](./LICENSE).
 For third-party model assets and license details, see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
+Rating scores stay in analysis metadata. The validator checks formatting, conflicts, and budget; the assistant reviews semantics and slot arrangement. Restore the exact tokenizer before validating the ordinary prompt budget.
+
+Default `--device auto` uses original CUDA BF16 inference (optional FP32) or falls back to ONNX CPU FP32 when CUDA is absent. Use `--device cpu` to force CPU. Retain emitted character candidates. Process multiple images together to share model loading. JSON `performance` separates model loading from per-image timing and reports PyTorch memory allocations.

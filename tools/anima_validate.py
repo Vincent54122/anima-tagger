@@ -6,7 +6,7 @@
   * 需要看图的语义冲突（发饰颜色到底是蓝还是紫）→ **只标记**，把决定权交回看图的那一步
 
 用法:
-    # 直接吃 wd_tagger.py 的 --json 输出
+    # 直接吃 pixai_tagger.py 的 --json 输出
     python anima_validate.py --tagger-json run.json
     # 或给一个逗号分隔的 tag 串
     python anima_validate.py --tags "1girl, solo, long_hair"
@@ -15,8 +15,8 @@
     # 不受 512 约束的通道（扩写分支）：只查形式，不做长度判定
     python anima_validate.py --tags "1girl, solo, ..." --no-token-limit
 
-退出码: 0=无问题, 1=有需要人工处理的冲突/超预算, 2=输入错误
-（带 --no-token-limit 时不会有"超预算"这一项，退出码 1 只剩槽位冲突与非法字符）
+退出码: 0=已实现的检查项通过, 1=形式/冲突/预算/无法精确计数等问题, 2=命令行参数错误
+（带 --no-token-limit 时跳过长度判定，仍检查形式、冲突及无法表示的字符）
 """
 from __future__ import annotations
 
@@ -30,11 +30,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 SEP = ", "
-TOKEN_LIMIT = 512  # Anima 硬编码上限。两路文本通道都是 512，先到线的是 T5，见 count_tokens
+TOKEN_LIMIT = 512  # 本项目针对的 Anima 配置预算；其他前端/版本需核对实际限制。
 
-# T5 sentencepiece 的 <unk> id。T5 词表只覆盖拉丁字母语言，
-# 中文、日文、带变音符号的字母都会落到这个 id 上——**内容在这一路已被丢弃**，
-# 此时 token 数不再代表那段文字的真实占用。
+# 随附 T5 分词器的 <unk> id；出现它意味着有字符无法表示。
 T5_UNK_ID = 2
 
 # ---------------------------------------------------------------- token 计数
@@ -46,16 +44,8 @@ def count_tokens(text: str) -> tuple[int | None, str]:
       ① 环境变量 ANIMA_TOKENIZER 指定的 tokenizer.json
       ② skill 自带的 models/t5_tokenizer/tokenizer.json
 
-    **为什么数 T5 而不是 Qwen**：Anima 的提示词同时进两条通道——Qwen3-0.6B
-    产出语义隐状态（context），T5 只负责切出 token 位置。模型里的 LLM Adapter
-    按 T5 的位置序列生成条件向量：
-
-        x = self.in_proj(self.embed(target_input_ids))   # 长度 = T5 切出多少
-        context = source_hidden_states                   # 内容 = Qwen 读出来的
-
-    所以**条件序列有多长由 T5 决定**，而两条通道各自独立截断到 512。同一段英文，
-    T5 切出来总比 Qwen 多（实测 tag 串 +2%、自然语言 +12%、长提示词 +16%），
-    即 T5 先撞线。只数 Qwen 会低估，报「480/512 安全」时 T5 那路已经砍掉尾巴。
+    本项目用随附 T5 分词器核算目标配置的 512 预算。
+    模型版本及前端可能采用不同的截断与特殊 token 策略，需按实际配置核对。
     """
     cand: list[Path] = []
     if env := os.environ.get("ANIMA_TOKENIZER"):
@@ -73,7 +63,7 @@ def count_tokens(text: str) -> tuple[int | None, str]:
                 return len(ids), tag
     except Exception:
         pass
-    # 启发式：按"逗号分隔的词组数 + 单词数"粗估，宁可高估
+    # 启发式仅供参考，不保证高估；普通分支不能据此确认预算合格。
     rough = len(re.findall(r"[A-Za-z0-9]+|[^\sA-Za-z0-9]", text))
     return rough, "estimate(rough)"
 
@@ -84,6 +74,52 @@ def normalize_tag(t: str) -> str:
     t = t.replace("_", " ")
     t = re.sub(r"\s+", " ", t).strip().lower()
     return t
+
+
+RATING_TAGS = {"general", "sensitive", "questionable", "explicit"}
+FORBIDDEN_TAGS = {"masterpiece", "best quality", "worst quality", "low quality",
+                  "ultra detailed", "break", "negative", "negative prompt"}
+
+
+def clean_tags(raw: list[str]) -> tuple[list[str], list[str]]:
+    """分级只属于打标元数据；成品中移除，其他标签保持顺序。"""
+    normalized = [normalize_tag(t) for t in raw if normalize_tag(t)]
+    removed = [t for t in normalized if t in RATING_TAGS]
+    return [t for t in normalized if t not in RATING_TAGS], removed
+
+
+def check_format(tags: list[str], nl: str = "", expansion: bool = False) -> list[str]:
+    """只检查可确定的形式，不猜画师、词表外标签或句子语义。"""
+    issues = []
+    for tag in tags:
+        if tag in FORBIDDEN_TAGS or re.fullmatch(r"score[ _]\d+(?:[ _]up)?", tag):
+            issues.append(f"禁用标签：{tag}")
+        if expansion and (re.search(r"\([^()]+:[0-9.]+\)", tag) or "((" in tag):
+            issues.append(f"扩写分支不使用权重语法：{tag}")
+    if nl.strip():
+        value = nl.strip()
+        if not value.endswith("."):
+            issues.append("自然语言段必须以英文句号结尾")
+        if value.startswith(('"', '“')) and value.endswith(('"', '”')):
+            issues.append("不要用引号包住整段自然语言")
+        if re.search(r"\bBREAK\b", value):
+            issues.append("自然语言段含禁用分隔指令 BREAK")
+        if re.search(r"(?im)^\s*negative(?: prompt)?\s*:", value):
+            issues.append("自然语言段不能包含 Negative Prompt 区块")
+    return issues
+
+
+def check_tokens(count: int, method: str, tag_count: int, enforce: bool) -> list[str]:
+    issues = []
+    if enforce and method.startswith("estimate"):
+        issues.append("分词器不可用：当前只有粗略估算，不能确认预算合格；请运行 tools/setup.py 检查环境")
+    if "+unk" in method:
+        issues.append("文本含当前 T5 词表无法表示的字符；请检查字符并使用规范英文")
+    if enforce and count > TOKEN_LIMIT:
+        hint = ("标签层本身超限：保护用户明确锚点，优先删冗余、次要及低置信度标签"
+                if tag_count > TOKEN_LIMIT else "优先精简 NL；仍超限时保护用户锚点并精简次要标签")
+        issues.append(f"token 超预算：{count} > {TOKEN_LIMIT}；tag 层 {tag_count}；{hint}")
+    return issues
 
 # ---------------------------------------------------------------- 上位词折叠
 
@@ -271,8 +307,12 @@ def detect_multi(tags: list[str]) -> tuple[bool, list[str]]:
     """自动判定是否多主体。**必须自动**——手工传 --multi 迟早会忘。"""
     present = set(tags)
     hit = sorted(present & MULTI_MARKERS)
-    if "1girl" in present and "1boy" in present:
-        hit.append("1girl+1boy")
+    counts = [t for t in present if re.fullmatch(r"\d+\+?(?:girls?|boys?|others?)", t)]
+    if any(int(re.match(r"\d+", t)[0]) >= 2 for t in counts):
+        hit.extend(t for t in counts if t not in hit and int(re.match(r"\d+", t)[0]) >= 2)
+    singles = sorted(t for t in counts if re.match(r"\d+", t)[0] == "1")
+    if len(singles) > 1:
+        hit.append("+".join(singles))
     return bool(hit), hit
 
 
@@ -284,15 +324,18 @@ def find_conflicts(tags: list[str], is_multi: bool = False) -> list[dict]:
     out: list[dict] = []
 
     # ① 结构 tag 互斥：solo 与任何"多人"标记不可能同时成立（1girl 不算多人）
-    multi_present = present & MULTI_MARKERS
-    if "solo" in present and multi_present:
+    multi_detected, _ = detect_multi(tags)
+    multi_present = (present & MULTI_MARKERS) | {
+        t for t in present if re.fullmatch(r"\d+\+?(?:girls?|boys?|others?)", t)}
+    if "solo" in present and multi_detected:
         out.append({"slot": "subject_count", "scope": "image",
                     "candidates": sorted({"solo"} | multi_present),
                     "needs": "solo 与多人标记不可能同时成立，必须删一边"})
-    if "1girl" in present and multi_present and not is_multi:
-        out.append({"slot": "subject_count_conflict", "scope": "image",
-                    "candidates": sorted({"1girl"} | multi_present),
-                    "needs": "1girl 与多人标记矛盾"})
+    for kind in ("girl", "boy", "other"):
+        counts = sorted(t for t in present if re.fullmatch(rf"\d+\+?{kind}s?", t))
+        if len(counts) > 1:
+            out.append({"slot": "subject_count_conflict", "scope": "image",
+                        "candidates": counts, "needs": "同类主体人数矛盾，需按画面或意图定夺"})
 
     # ② 槽位多值（带分类词豁免）
     # 已知可叠的例外：`wide shot` 可以与 `full body` 同时成立（nai5 §3.9 明确列出）
@@ -350,11 +393,6 @@ def load_tagger_json(path: Path | str) -> tuple[list[str], dict[str, float]]:
             for name, s in (rec.get(key) or {}).items():
                 tags.append(name)
                 scores[name] = max(scores.get(name, 0.0), float(s))
-        rating = rec.get("rating") or {}
-        if rating:
-            best = max(rating, key=rating.get)
-            tags.append(best)
-            scores[best] = max(scores.get(best, 0.0), float(rating[best]))
     return tags, scores
 
 
@@ -366,17 +404,18 @@ def per_record(args) -> int:
     rc = 0
     for rec in data:
         tags = list(rec.get("character", {})) + list(rec.get("general", {}))
-        rating = rec.get("rating") or {}
-        if rating:
-            tags.append(max(rating, key=rating.get))
-        norm = [normalize_tag(t) for t in tags if normalize_tag(t)]
+        norm, removed_ratings = clean_tags(tags)
+        norm = list(dict.fromkeys(norm))
         folded, drops, blocked = fold_redundant(norm, {normalize_tag(k): v for k, v in
                                                        {**rec.get("character", {}), **rec.get("general", {})}.items()})
         is_multi, markers = detect_multi(folded)
         conflicts = find_conflicts(folded, is_multi=is_multi)
         text = SEP.join(folded)
-        n_tok, how = count_tokens(text)
-        if conflicts or (not args.no_token_limit and (n_tok or 0) > TOKEN_LIMIT):
+        issues = check_format(folded, args.nl, args.no_token_limit)
+        full_text = f"{text},\n\n{args.nl}" if text and args.nl else (text or args.nl)
+        n_tok, how = count_tokens(full_text)
+        issues.extend(check_tokens(n_tok, how, count_tokens(text)[0], not args.no_token_limit))
+        if conflicts or issues:
             rc = 1
         rows.append({
             "image": Path(rec.get("image", "?")).name,
@@ -385,6 +424,7 @@ def per_record(args) -> int:
             "token_limit_enforced": not args.no_token_limit,
             "is_multi": is_multi, "markers": markers,
             "conflicts": [f"{c['slot']}: " + " | ".join(c["candidates"]) for c in conflicts],
+            "removed_ratings": removed_ratings, "problems": issues,
         })
     print(json.dumps(rows, ensure_ascii=False, indent=2))
     return rc
@@ -399,19 +439,23 @@ def main() -> int:
 
     ap = argparse.ArgumentParser()
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--tagger-json", type=str, help="wd_tagger.py --json 的输出文件路径，支持 '-' 表示从标准输入 stdin 读取")
+    src.add_argument("--tagger-json", type=str, help="pixai_tagger.py --json 的输出文件路径，支持 '-' 表示从标准输入 stdin 读取")
     src.add_argument("--tags", help="逗号分隔的 tag 串")
-    ap.add_argument("--nl", default="", help="自然语言段（一起算 token）")
+    nl_src = ap.add_mutually_exclusive_group()
+    nl_src.add_argument("--nl", default="", help="自然语言段（一起算 token）")
+    nl_src.add_argument("--nl-file", type=Path, help="从文件读取自然语言或扩写长稿（不含标签段）")
     ap.add_argument("--multi", action="store_true", help="强制多人模式（正常会自动探测）")
     ap.add_argument("--no-token-limit", action="store_true",
                     help="跳过 512 token 预算判定（扩写分支用：目标通道不受 T5 上限约束）；"
                          "规范化、上位词折叠与槽位冲突照常检查，仍会打印 token 数仅供参考")
     ap.add_argument("--per-record", action="store_true",
-                    help="输入是 wd_tagger 的多图 JSON 时，逐张图分别校验（E2E 用）")
+                    help="输入是 pixai_tagger 的多图 JSON 时，逐张图分别校验（E2E 用）")
     ap.add_argument("--proposed", type=Path,
                     help="审计一个 LLM 给出的 tag 列表（逗号分隔或每行一个）：查发明 / 查过度删除")
     ap.add_argument("--json", action="store_true", help="以 JSON 输出")
     args = ap.parse_args()
+    if args.nl_file:
+        args.nl = read_text_sniff(args.nl_file)
 
     if args.per_record and args.tagger_json:
         return per_record(args)
@@ -424,13 +468,12 @@ def main() -> int:
     problems: list[str] = []
 
     # 1) 规范化（分数跟着规范化后的名字走，折叠时按分数挑保留项）
-    norm = [normalize_tag(t) for t in raw]
-    norm = [t for t in norm if t]
+    norm, removed_ratings = clean_tags(raw)
     score_by_norm: dict[str, float] = {}
     for src, dst in zip(raw, [normalize_tag(t) for t in raw]):
         if dst:
             score_by_norm[dst] = max(score_by_norm.get(dst, 0.0), raw_scores.get(src, 0.0))
-    changed = [(a, b) for a, b in zip(raw, norm) if a.strip().lower() != b]
+    changed = [(a, normalize_tag(a)) for a in raw if a.strip() != normalize_tag(a)]
 
     # 2) 去重（保序）
     seen, deduped = set(), []
@@ -447,7 +490,7 @@ def main() -> int:
     if args.proposed:
         txt = read_text_sniff(args.proposed)
         prop_raw = [t for t in re.split(r"[,\n]", txt) if t.strip()]
-        prop = [normalize_tag(t) for t in prop_raw if normalize_tag(t)]
+        prop, _ = clean_tags(prop_raw)
         prop_set, input_set = set(prop), set(deduped)
         invented = sorted(prop_set - input_set)
         dropped_vs_input = sorted(input_set - prop_set)
@@ -468,32 +511,18 @@ def main() -> int:
     # 5) 组装 + token
     #    tag 层单独也数一遍：它是固定开支，剩下的全是 NL 预算，这个数直接决定 NL 还能写多少。
     tag_text = SEP.join(folded)
-    text = f"{tag_text}. {args.nl}" if (tag_text and args.nl) else (tag_text or args.nl)
+    text = f"{tag_text},\n\n{args.nl}" if (tag_text and args.nl) else (tag_text or args.nl)
     n_tok, how = count_tokens(text)
-    tag_tok: int | None = None
-    if tag_text and args.nl:
-        tag_tok, _ = count_tokens(tag_text)
-    if not args.no_token_limit and n_tok is not None and n_tok > TOKEN_LIMIT:
-        msg = f"token 超预算：{n_tok} > {TOKEN_LIMIT}（超出 {n_tok - TOKEN_LIMIT}，{how}）"
-        if tag_tok is not None:
-            # 实测（0.35 阈值、24 张图）：最复杂的图 tag 层也只到 291，离 512 有 221 余量。
-            # 所以要撑满 512 得把 tag 数翻近一倍——正常情况超预算一定是 NL 太长。
-            msg += f"　→　精简 NL（tag 层占 {tag_tok}，NL 预算 {TOKEN_LIMIT - tag_tok}）"
-            if tag_tok > TOKEN_LIMIT:
-                msg += ("\n      ⚠ tag 层单独就超了 512，这不正常——"
-                        "先查 tagger 阈值/模型是不是被换过，别靠删 tag 硬凑")
-        problems.append(msg)
-    if "+unk" in how:
-        problems.append(
-            "文本里有 T5 词表表示不了的字符（中文、日文等）——这一段在 T5 通道会被丢成 <unk>，"
-            "token 数不代表它的真实占用，那段内容也进不了模型。Anima 的提示词应当是英文"
-        )
+    tag_tok, _ = count_tokens(tag_text)
+    problems.extend(check_format(folded, args.nl, args.no_token_limit))
+    problems.extend(check_tokens(n_tok, how, tag_tok, not args.no_token_limit))
     if conflicts:
         problems.append(f"{len(conflicts)} 个槽位有多值，需人工/看图定夺")
 
     result = {
         "input_count": len(raw),
         "normalized_changed": changed,
+        "removed_ratings": removed_ratings,
         "deduped_removed": len(norm) - len(deduped),
         "folded": [{"dropped": d, "kept_because": k} for d, k in drops],
         "fold_blocked_by_action_word": [{"kept": k, "would_have_folded": v} for v, k in blocked_folds],
@@ -516,6 +545,8 @@ def main() -> int:
         print(f"输入 {len(raw)} → 规范化后 {len(norm)} → 去重 {len(deduped)} → 折叠后 {len(folded)}")
         if changed:
             print("\n[规范化改动] " + ", ".join(f"{a!r}→{b!r}" for a, b in changed[:20]))
+        if removed_ratings:
+            print("\n[分级标签已移除] " + SEP.join(removed_ratings))
         if drops:
             print("\n[上位词折叠]")
             for d, k in drops:
@@ -533,7 +564,7 @@ def main() -> int:
         else:
             tok_line = f"\n[token] {n_tok} （{how}） / 上限 {TOKEN_LIMIT}"
         if tag_tok is not None and not args.no_token_limit:
-            tok_line += f"　·　tag 层 {tag_tok}　→　NL 最多 {TOKEN_LIMIT - tag_tok}"
+            tok_line += f"　·　tag 层 {tag_tok}　→　NL 参考余额 {max(0, TOKEN_LIMIT - tag_tok)}（分隔符也占预算）"
         print(tok_line)
         print("\n[最终 tag] " + SEP.join(folded))
         if args.nl:

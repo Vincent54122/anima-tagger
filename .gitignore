@@ -45,3 +45,7 @@ run*.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+.venv-pixai-gpu/
+models/pixai-tagger-v1.0-original/
+models/pixai-tagger-v1.0-onnx/

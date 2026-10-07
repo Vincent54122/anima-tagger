@@ -7,30 +7,38 @@ name = "anima-tagger"
 version = "0.1.0"
 description = "Deterministic prompt generator and tagger skill for Anima and dual-channel anime diffusion models."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
     { name = "anima-tagger contributors" }
 ]
-keywords = ["anime", "danbooru", "tagger", "prompting", "diffusion", "onnx", "agent-skill"]
+keywords = ["anime", "danbooru", "tagger", "prompting", "diffusion", "cuda", "agent-skill"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "onnxruntime>=1.17",
+    "onnxruntime==1.30.0",
     "pillow>=10.0",
     "numpy>=1.24",
-    "tokenizers>=0.15",
+    "tokenizers==0.22.2",
+    "huggingface_hub==0.36.2",
 ]
 
 [project.optional-dependencies]
+gpu = [
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "transformers==4.57.6",
+    "timm==1.0.30",
+    "accelerate==1.15.0",
+    "safetensors==0.8.0",
+]
 setup = [
     "huggingface_hub>=0.23",
 ]
@@ -40,7 +48,7 @@ dev = [
 ]
 
 [project.scripts]
-anima-tagger = "tools.wd_tagger:main"
+anima-tagger = "tools.pixai_tagger:main"
 anima-validate = "tools.anima_validate:main"
 anima-setup = "tools.setup:main"
 

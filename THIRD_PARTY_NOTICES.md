@@ -25,64 +25,33 @@
 上游提供的是 SentencePiece 格式的 `spiece.model`（791,656 bytes，
 SHA256 `d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86`）。
 本仓库分发的是**由它转换而来的 `tokenizer.json`**，目的是复用已有的 `tokenizers`
-依赖，不再额外引入 `sentencepiece`。
+依赖，无需额外安装 `sentencepiece`。
 
-转换结果已核对：与官方 `T5Tokenizer` 对同一批文本（tag 串、自然语言、权重语法、
-括号、下划线、标点、空串）的编码结果**逐个 token id 相同**。
-
-> 该词表只覆盖拉丁字母语言。中文、日文等会落到 `<unk>`，内容在这一通道直接丢失；
+> 当前分词器无法表示的字符会产生 `<unk>`；是否可表示以实际分词结果为准。
 > 校验器检测到会标 `+unk` 并报警。
 
 > **为什么是 T5 而不是 Qwen**：Anima 的文本编码器确实是 Qwen3-0.6B，
 > 但提示词同时进两条通道——Qwen 产出语义（context），T5 只切 token 位置，
 > 模型里的 LLM Adapter 按 T5 的位置序列生成条件向量。两条通道各自截断到 512，
-> 而同一段英文 T5 切得更多，所以 **T5 先撞线**。详见 [models/README.md](models/README.md)。
+> 这是本项目的目标配置；两条通道的计数可能不同，应按目标通道核算预算。详见 [models/README.md](models/README.md)。
 
 ---
 
-## 2. 不随本仓库分发、由使用者自行获取的资产
+## 2. 由 setup 下载的 PixAI 原版资产
 
-### WD EVA02 Tagger 2026 Canary（模型本体）
+- 上游：[pixai-labs/pixai-tagger-v1.0](https://huggingface.co/pixai-labs/pixai-tagger-v1.0)
+- 固定 revision：`9fe10addf9326e292da8a85a98ea74cd91b41771`
+- 文件：`model.safetensors`、`config.json`、`preprocessor_config.json`、`tagger_pipeline.py`、`README.md`。
+- 上游模型卡声明 **Apache-2.0**；固定版本未提供独立 LICENSE/NOTICE 文件。本项目保留下载的模型卡，不将这些第三方代码和权重声称为 MIT。
+- 代码/配置/权重 SHA256 见 `tools/pixai_config.py`；官方代码未经本项目修改。
+- 权重与上游代码不随本仓库再分发，使用者通过 setup 直接下载。
 
-| 项 | 值 |
-|---|---|
-| 作者 | [`ashen-sensored`](https://huggingface.co/ashen-sensored/wd-eva02-tagger-2026-canary) |
-| revision | `c45a59a3f17c0ca6066072b1c213e0c12a90e242` |
-| 许可 | **Apache-2.0**（上游 metadata 声明 `license:apache-2.0`，且随附 `LICENSE` 文件） |
-| 说明 | 16,473 标签（2,205 character ＋ 3,794 general 为新增） |
-| 训练数据截止 | 2026-05-18（danbooru ID 11403645） |
-| 标签元数据来源 | [`u-haru/danbooru-tags-20260518`](https://huggingface.co/datasets/u-haru/danbooru-tags-20260518) |
-| 基座模型 | [`SmilingWolf/wd-eva02-large-tagger-v3`](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)（Apache-2.0） |
+## 3. 标签词表
 
-### ONNX 导出（本项目实际加载的文件）
+标签名位于 PixAI `config.json`，派生自 Danbooru 标签体系。项目不主张标签名本身的权利，不分发 Danbooru 图库或数据集。
 
-| 项 | 值 |
-|---|---|
-| 上游 | [`Misaka41Z/wd-eva02-tagger-2026-canary-onnx-v2`](https://huggingface.co/Misaka41Z/wd-eva02-tagger-2026-canary-onnx-v2) |
-| revision | `0a86acfa093b33b8818667820e52fc5eccf27ff8` |
-| 文件 | `model.onnx`（1,309,248,037 bytes，SHA256 `fd78fbdf9390cbd163e4dd28f754a5bbf83bc7a111c4d20270f22415a0f66c95`）<br>`selected_tags.csv`（467,782 bytes，SHA256 `3f78c28ee0d50779edb320733f76aeaf4184694cbd09c631deef6889865f9178`） |
-| 许可 | 沿用模型本体的 **Apache-2.0** |
-| 性质 | 对上述模型的 **ONNX 格式转换**；本项目加载的就是这一份 |
+用户自行下载的其他模型或资产应遵守各自的上游许可证。
 
-> 该 ONNX 仓库未附 `LICENSE` 文件，其创作者做的是格式转换、并非模型作者，
-> 因此授权以**模型本体**（`ashen-sensored`，Apache-2.0）为准。
-> `tools/setup.py` 会把模型作者随附的 `LICENSE` 文本一并取回落进模型目录。
-> 使用者直接从上游获取权重，与本项目之间不存在再分发关系。
+## 4. PixAI ONNX CPU 回退资产
 
----
-
-## 3. 关于标签词表
-
-`selected_tags.csv` 中的标签名派生自 Danbooru 的 tag 体系，随上述 ONNX 导出一并提供。
-本仓库不主张对标签名本身的任何权利，也不分发 Danbooru 的图库或数据集。
-
----
-
-## 4. 上游 NOTICE
-
-Apache-2.0 第 4(d) 条：若上游随作品提供了 `NOTICE` 文件，再分发时需一并保留。
-本文件核对过的四个上游仓库——`google/t5-v1_1-xxl`、`SmilingWolf/wd-eva02-large-tagger-v3`、
-`ashen-sensored/wd-eva02-tagger-2026-canary`、`Misaka41Z/wd-eva02-tagger-2026-canary-onnx-v2`
-——**均未附 `NOTICE` 文件**，因此目前没有需要转抄的 NOTICE 内容。
-其中只有 `ashen-sensored/wd-eva02-tagger-2026-canary` 附了 `LICENSE` 文件。
-若上游后续补充 `NOTICE`，本仓库的使用者应一并遵守。
+上游：[noaione/pixai-tagger-v1.0-onnx](https://huggingface.co/noaione/pixai-tagger-v1.0-onnx)，revision `68e8f4f02dd56a5f40c1b7474489fa0f599dec34`。这是 PixAI 原模型的第三方 ONNX 转换，模型卡声明 Apache-2.0。setup 下载模型图、外部权重、词表及模型卡，不执行上游运行脚本。全部文件哈希见 `tools/pixai_config.py`。
