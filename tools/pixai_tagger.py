@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import math
@@ -59,7 +60,16 @@ class PixAICPUTagger:
     def __init__(self, model_dir=CPU_MODEL_DIR, threads=8):
         problems = verify_assets(model_dir, cpu=True)
         if problems:
-            raise RuntimeError("\n".join(problems) + "\nRun python tools/setup.py --device cpu")
+            try:
+                from .setup import fetch_cpu_model
+            except ImportError:
+                from setup import fetch_cpu_model
+            # Keep progress off stdout so --json stays machine-readable.
+            with contextlib.redirect_stdout(sys.stderr):
+                fetch_cpu_model(model_dir)
+            problems = verify_assets(model_dir, cpu=True)
+            if problems:
+                raise RuntimeError("\n".join(problems))
         import onnxruntime as ort
         categories = json.loads((Path(model_dir) / "tags.json").read_text(encoding="utf-8"))["categories"]
         self.tags, self.splits = [], []

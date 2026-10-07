@@ -127,7 +127,7 @@ cd anima-tagger
 python tools/setup.py
 ```
 
-`setup.py` 会初始化独立的 `.venv-pixai-gpu` 环境，按设备安装依赖与固定版本权重。GPU 部署包含原版模型及 ONNX CPU 回退模型；CPU 部署只下载 ONNX 模型。可用 `python tools/setup.py --device cpu` 强制部署 CPU。
+`setup.py` 会初始化独立的 `.venv-pixai-gpu` 环境，按设备安装依赖与固定版本权重。GPU 部署只下载原版模型；CPU 部署只下载 ONNX 模型。打标实际回退到 CPU 时，会自动下载缺失的 ONNX 文件，已有且通过校验的文件直接复用。可用 `python tools/setup.py --device cpu` 强制部署 CPU。
 随时可验证安装完整性：
 
 ```powershell

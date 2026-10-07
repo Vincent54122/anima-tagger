@@ -77,10 +77,7 @@ def configure_backend(backend):
 
 
 def asset_problems(weights=False):
-    problems = verify_assets(MODEL_DIR, weights=weights, cpu=BACKEND == "cpu")
-    if BACKEND == "cuda":
-        problems += verify_assets(CPU_MODEL_DIR, weights=weights, cpu=True)
-    return problems
+    return verify_assets(MODEL_DIR, weights=weights, cpu=BACKEND == "cpu")
 
 RULE = "=" * 68
 
@@ -186,7 +183,7 @@ def print_report(py: Path, problems: list[str], *, show_next_step: bool) -> int:
     print(f"skill 根目录 : {ROOT}")
     print(f"python       : {py}")
     print(f"模型目录     : {MODEL_DIR}")
-    print(f"运行路线     : {BACKEND} (CUDA deployments also include ONNX CPU fallback)")
+    print(f"运行路线     : {BACKEND}")
     print(f"HF 端点      : {os.environ.get('HF_ENDPOINT', 'https://huggingface.co')}")
     print(RULE)
 
@@ -302,25 +299,34 @@ def ensure_download_env() -> None:
     )
 
 
-def fetch_model() -> None:
+def download_assets(directory, repo, revision, hashes, *, cpu=False) -> None:
+    if not verify_assets(directory, weights=True, cpu=cpu):
+        print(f"[3/4] Verified assets already available: {repo}")
+        return
     ensure_download_env()
     from huggingface_hub import snapshot_download
-    assets = [(MODEL_DIR, MODEL_REPO, MODEL_REVISION, MODEL_FILES, BACKEND == "cpu")]
-    if BACKEND == "cuda":
-        assets.append((CPU_MODEL_DIR, CPU_MODEL_REPO, CPU_MODEL_REVISION, tuple(CPU_MODEL_HASHES), True))
-    for directory, repo, revision, files, cpu in assets:
-        if not verify_assets(directory, weights=True, cpu=cpu):
-            print(f"[3/4] Verified assets already available: {repo}")
-            continue
-        print(f"[3/4] Downloading pinned {repo}@{revision[:12]} (about 1.9 GiB)")
-        directory.mkdir(parents=True, exist_ok=True)
-        try:
-            snapshot_download(repo_id=repo, revision=revision, local_dir=str(directory), allow_patterns=list(files))
-        except Exception as exc:
-            raise SystemExit(f"Download failed: {exc}. Retry setup, or set HF_ENDPOINT to a reachable mirror.")
-        problems = verify_assets(directory, weights=True, cpu=cpu)
-        if problems:
-            raise SystemExit("\n".join(problems))
+    print(f"[3/4] Downloading pinned {repo}@{revision[:12]} (about 1.9 GiB)")
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        snapshot_download(repo_id=repo, revision=revision, local_dir=str(directory), allow_patterns=list(hashes))
+    except Exception as exc:
+        raise RuntimeError(f"Download failed: {exc}. Retry setup, or set HF_ENDPOINT to a reachable mirror.") from exc
+    problems = verify_assets(directory, weights=True, cpu=cpu)
+    if problems:
+        raise RuntimeError("\n".join(problems))
+
+
+def fetch_cpu_model(directory=CPU_MODEL_DIR) -> None:
+    download_assets(directory, CPU_MODEL_REPO, CPU_MODEL_REVISION, CPU_MODEL_HASHES, cpu=True)
+
+
+def fetch_model() -> None:
+    hashes = CPU_MODEL_HASHES if BACKEND == "cpu" else GPU_ASSETS[3]
+    try:
+        download_assets(MODEL_DIR, MODEL_REPO, MODEL_REVISION, hashes, cpu=BACKEND == "cpu")
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 # ---------------------------------------------------------------- 主流程

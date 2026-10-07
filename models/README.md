@@ -64,4 +64,4 @@ Anima 的提示词应当是英文。
 
 ## PixAI ONNX CPU 回退
 
-目录 `models/pixai-tagger-v1.0-onnx/`；上游 `noaione/pixai-tagger-v1.0-onnx`，固定 revision `68e8f4f02dd56a5f40c1b7474489fa0f599dec34`。文件为 `model.onnx`、`model.onnx.data`、`tags.json`、`README.md`，哈希见 `tools/pixai_config.py`。ONNX Runtime 1.30.0、CPUExecutionProvider、默认 8 线程、FP32，采用 PIL 双线性缩放与补边。GPU 部署同时准备这套文件；CPU 部署只需这套。
+目录 `models/pixai-tagger-v1.0-onnx/`；上游 `noaione/pixai-tagger-v1.0-onnx`，固定 revision `68e8f4f02dd56a5f40c1b7474489fa0f599dec34`。文件为 `model.onnx`、`model.onnx.data`、`tags.json`、`README.md`，哈希见 `tools/pixai_config.py`。ONNX Runtime 1.30.0、CPUExecutionProvider、默认 8 线程、FP32，采用 PIL 双线性缩放与补边。CPU 部署下载这套文件；GPU 部署仅准备原版，打标回退到 CPU 时按需下载 ONNX，并复用已校验的文件。

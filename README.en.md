@@ -127,7 +127,7 @@ cd anima-tagger
 python tools/setup.py
 ```
 
-`setup.py` initializes `.venv-pixai-gpu`, installs dependencies for the selected device, and downloads pinned assets. GPU deployment includes original weights and the ONNX CPU fallback; CPU deployment downloads only ONNX assets. Use `python tools/setup.py --device cpu` to force CPU deployment. Verify setup integrity anytime with:
+`setup.py` initializes `.venv-pixai-gpu`, installs dependencies for the selected device, and downloads pinned assets. GPU deployment downloads only original weights; CPU deployment downloads only ONNX assets. When tagging falls back to CPU, missing ONNX assets are downloaded automatically and verified files are reused. Use `python tools/setup.py --device cpu` to force CPU deployment. Verify setup integrity anytime with:
 
 ```powershell
 python tools/setup.py --check
