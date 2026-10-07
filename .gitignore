@@ -49,3 +49,7 @@ desktop.ini
 .venv-pixai-gpu/
 models/pixai-tagger-v1.0-original/
 models/pixai-tagger-v1.0-onnx/
+
+# Local presets and verification files
+/presets/
+/tests/
